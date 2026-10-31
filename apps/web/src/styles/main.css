@@ -1,0 +1,452 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg-primary: #09090b;
+    --bg-surface: #18181b;
+    --border-subtle: #27272a;
+    --brand-accent: #f97316;
+    --nash-300: 253 186 116;
+    --nash-400: 251 146 60;
+    --nash-500: 249 115 22;
+    --nash-600: 234 88 12;
+    --md-heading: #fb923c;
+    --md-code-bg: rgba(39, 39, 42, 0.75);
+    --md-code-text: #fdba74;
+    --md-code-border: rgba(63, 63, 70, 0.6);
+    --md-table-head: rgba(39, 39, 42, 0.7);
+    --md-table-stripe: rgba(24, 24, 27, 0.45);
+    --md-quote-bg: rgba(39, 39, 42, 0.35);
+    --md-inset-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.2);
+
+    /* 暗黑模式 Surface RGB 通道值 */
+    --surface-50: 250 250 250;
+    --surface-100: 244 244 245;
+    --surface-200: 228 228 231;
+    --surface-300: 212 212 216;
+    --surface-400: 161 161 170;
+    --surface-500: 113 113 122;
+    --surface-600: 82 82 91;
+    --surface-700: 63 63 70;
+    --surface-800: 39 39 42;
+    --surface-900: 24 24 27;
+    --surface-950: 9 9 11;
+  }
+
+  html.light {
+    --bg-primary: #f8fafc;
+    --bg-surface: #ffffff;
+    --border-subtle: #e2e8f0;
+    --brand-accent: #c2410c;
+    --nash-300: 154 52 18;
+    --nash-400: 194 65 12;
+    --nash-500: 194 65 12;
+    --nash-600: 154 52 18;
+    --md-heading: #9a3412;
+    --md-code-bg: #f8fafc;
+    --md-code-text: #9a3412;
+    --md-code-border: #e2e8f0;
+    --md-table-head: #f1f5f9;
+    --md-table-stripe: #f8fafc;
+    --md-quote-bg: #fff7ed;
+    --md-inset-shadow: none;
+
+    --surface-50: 15 23 42;
+    --surface-100: 30 41 59;
+    --surface-200: 51 65 85;
+    --surface-300: 71 85 105;
+    --surface-400: 100 116 139;
+    --surface-500: 148 163 184;
+    --surface-600: 203 213 225;
+    --surface-700: 218 225 234;
+    --surface-800: 226 232 240;
+    --surface-900: 248 250 252;
+    --surface-950: 255 255 255;
+  }
+
+  body {
+    background-color: var(--bg-primary);
+    color: rgb(var(--surface-100));
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  html.light body {
+    color: rgb(var(--surface-100));
+  }
+}
+
+/* 优雅自定义滚动条 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(113, 113, 122, 0.3);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(113, 113, 122, 0.5);
+}
+
+/* 移动端安全区域适配 */
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 16px);
+}
+
+.pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+/* Vue Flow 定制样式 */
+.vue-flow__edge-path {
+  stroke: #52525b;
+  stroke-width: 2;
+}
+
+.vue-flow__edge.selected .vue-flow__edge-path,
+.vue-flow__edge:focus .vue-flow__edge-path {
+  stroke: #f97316;
+  stroke-width: 2.5;
+}
+
+.vue-flow__controls {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  border-radius: 8px;
+  background: rgb(var(--surface-900)) !important;
+  border: 1px solid rgb(var(--surface-800)) !important;
+}
+
+.vue-flow__controls-button {
+  background: rgb(var(--surface-900)) !important;
+  border-bottom: 1px solid rgb(var(--surface-800)) !important;
+  fill: rgb(var(--surface-400)) !important;
+}
+
+.vue-flow__controls-button:hover {
+  background: rgb(var(--surface-800)) !important;
+  fill: rgb(var(--surface-100)) !important;
+}
+
+.vue-flow__minimap {
+  background: rgb(var(--surface-900)) !important;
+  border: 1px solid rgb(var(--surface-800)) !important;
+  border-radius: 8px;
+}
+
+/* 用户消息全宽底色卡片 */
+.user-message-card {
+  background-color: #1e1e22;
+  border-left: 3px solid #f97316;
+}
+
+html.light .user-message-card {
+  background-color: #f8fafc;
+  border-left: 3px solid var(--brand-accent);
+  color: rgb(var(--surface-100));
+}
+
+/* Assistant 消息卡片 */
+.assistant-message-card {
+  background-color: rgba(24, 24, 27, 0.65);
+  border: 1px solid rgba(39, 39, 42, 0.85);
+  box-shadow: 0 4px 16px -2px rgba(0, 0, 0, 0.25);
+}
+
+html.light .assistant-message-card {
+  background-color: #ffffff;
+  border: 1px solid rgb(var(--surface-800));
+  box-shadow: 0 2px 8px -2px rgba(15, 23, 42, 0.05);
+}
+
+/* ============================================================
+   Nash Markdown Typography 排版引擎
+   ============================================================ */
+.nash-markdown {
+  color: rgb(var(--surface-200));
+  font-size: 0.875rem; /* 14px */
+  line-height: 1.75;
+  word-break: break-word;
+}
+
+.nash-markdown h1 {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: rgb(var(--surface-50));
+  margin-top: 1.35rem;
+  margin-bottom: 0.65rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid rgb(var(--surface-800));
+  letter-spacing: -0.01em;
+}
+
+.nash-markdown h2 {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: rgb(var(--surface-100));
+  margin-top: 1.15rem;
+  margin-bottom: 0.55rem;
+  letter-spacing: -0.01em;
+}
+
+.nash-markdown h3 {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--md-heading);
+  margin-top: 0.95rem;
+  margin-bottom: 0.45rem;
+}
+
+.nash-markdown h4, .nash-markdown h5, .nash-markdown h6 {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: rgb(var(--surface-100));
+  margin-top: 0.8rem;
+  margin-bottom: 0.4rem;
+}
+
+.nash-markdown p {
+  margin-top: 0.45rem;
+  margin-bottom: 0.75rem;
+}
+
+.nash-markdown p:last-child {
+  margin-bottom: 0;
+}
+
+.nash-markdown strong, .nash-markdown b {
+  font-weight: 600;
+  color: rgb(var(--surface-50));
+}
+
+.nash-markdown em, .nash-markdown i {
+  font-style: italic;
+  color: rgb(var(--surface-300));
+}
+
+.nash-markdown ul {
+  list-style-type: disc;
+  padding-left: 1.35rem;
+  margin-top: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.nash-markdown ol {
+  list-style-type: decimal;
+  padding-left: 1.35rem;
+  margin-top: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.nash-markdown li {
+  margin-top: 0.35rem;
+  margin-bottom: 0.35rem;
+  line-height: 1.7;
+}
+
+.nash-markdown li::marker {
+  color: var(--md-heading);
+  font-weight: 600;
+}
+
+.nash-markdown ul ul, .nash-markdown ol ol, .nash-markdown ul ol, .nash-markdown ol ul {
+  margin-top: 0.25rem;
+  margin-bottom: 0.25rem;
+  padding-left: 1.15rem;
+}
+
+.nash-markdown code:not(pre code) {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.8125rem;
+  background-color: var(--md-code-bg);
+  color: var(--md-code-text);
+  border: 1px solid var(--md-code-border);
+  padding: 0.15rem 0.4rem;
+  border-radius: 0.375rem;
+  word-break: normal;
+  overflow-wrap: anywhere;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  font-weight: 500;
+}
+
+.nash-markdown a {
+  color: var(--md-heading);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.nash-markdown pre {
+  margin-top: 0.75rem;
+  margin-bottom: 0.75rem;
+  padding: 0.9rem 1.15rem;
+  background-color: rgb(var(--surface-950));
+  border: 1px solid rgb(var(--surface-800));
+  border-radius: 0.6rem;
+  overflow-x: auto;
+  box-shadow: var(--md-inset-shadow);
+}
+
+.nash-markdown pre code {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  color: rgb(var(--surface-200));
+  background: transparent;
+  padding: 0;
+  border: none;
+}
+
+.nash-markdown blockquote {
+  margin-top: 0.75rem;
+  margin-bottom: 0.75rem;
+  padding: 0.6rem 1rem;
+  border-left: 3px solid var(--brand-accent);
+  background: var(--md-quote-bg);
+  border-radius: 0 0.5rem 0.5rem 0;
+  color: rgb(var(--surface-300));
+  font-style: normal;
+}
+
+.nash-markdown hr {
+  margin-top: 1.25rem;
+  margin-bottom: 1.25rem;
+  border: 0;
+  border-top: 1px solid rgb(var(--surface-800));
+}
+
+.nash-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  margin-block: 1rem;
+  border: 1px solid rgb(var(--surface-800));
+  border-radius: 0.65rem;
+}
+
+.nash-table-scroll:focus-visible {
+  outline: 2px solid var(--brand-accent);
+  outline-offset: 2px;
+}
+
+.nash-markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0;
+  font-size: 0.8125rem;
+}
+
+.nash-markdown th, .nash-markdown td {
+  border: 1px solid rgb(var(--surface-800));
+  padding: 0.55rem 0.85rem;
+  text-align: left;
+  vertical-align: top;
+  line-height: 1.8;
+  min-width: 6rem;
+}
+
+.nash-markdown th {
+  background-color: var(--md-table-head);
+  font-weight: 600;
+  color: rgb(var(--surface-100));
+}
+
+.nash-markdown tbody tr:nth-child(even) {
+  background-color: var(--md-table-stripe);
+}
+
+/* ============================================================
+   Nash AI Prompt Optimizer Flow & Shimmer Animations
+   ============================================================ */
+@keyframes shimmer-flow {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+.animate-shimmer-flow {
+  background-size: 200% 200%;
+  animation: shimmer-flow 3.5s ease infinite;
+}
+
+@keyframes pulse-subtle {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.85;
+    transform: scale(1.04);
+  }
+}
+
+.animate-pulse-subtle {
+  animation: pulse-subtle 2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-shimmer-flow,
+  .animate-pulse-subtle {
+    animation: none !important;
+  }
+}
+
+
+/* Product control-plane forms share the existing light/dark surface tokens. */
+.product-page { width: 100%; max-width: 1160px; margin-inline: auto; padding: clamp(20px, 3vw, 40px); color: rgb(var(--surface-100)); }
+.product-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; margin-bottom: 28px; }
+.product-eyebrow { color: var(--brand-accent); font-size: 12px; font-weight: 650; letter-spacing: .08em; margin-bottom: 8px; }
+.product-header h1 { font-size: clamp(24px, 3vw, 30px); font-weight: 700; letter-spacing: -.03em; line-height: 1.25; }
+.product-subtitle { color: rgb(var(--surface-400)); font-size: 14px; line-height: 1.7; margin-top: 9px; max-width: 68ch; }
+.product-card { background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 16px; padding: 24px; min-width: 0; box-shadow: 0 2px 5px #00000003; }
+.product-card h2 { font-size: 17px; font-weight: 650; margin-bottom: 8px; letter-spacing: -.015em; }
+.product-stack { display: grid; gap: 20px; }
+.product-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.product-field { display: flex; flex-direction: column; gap: 7px; min-width: 0; font-size: 14px; font-weight: 550; }
+.product-field small, .product-help { font-size: 13px; font-weight: 400; color: rgb(var(--surface-400)); line-height: 1.65; }
+.product-input { width: 100%; min-width: 0; min-height: 44px; background: rgb(var(--surface-950)); color: rgb(var(--surface-100)); border: 1px solid rgb(var(--surface-700)); border-radius: 9px; padding: 10px 12px; font-size: 14px; font-weight: 400; }
+.product-input:focus-visible, .product-button:focus-visible, .product-page a:focus-visible { outline: 2px solid var(--brand-accent); outline-offset: 3px; }
+.product-input:disabled { opacity: .65; cursor: not-allowed; }
+.product-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.product-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 10px 16px; border: 1px solid rgb(var(--surface-700)); border-radius: 9px; background: var(--bg-surface); color: rgb(var(--surface-200)); font-size: 14px; font-weight: 600; cursor: pointer; transition: background-color .15s, border-color .15s; text-decoration: none; }
+.product-button:hover:not(:disabled) { background: rgb(var(--surface-800) / .45); border-color: rgb(var(--surface-500)); }
+.product-button.primary { background: var(--brand-accent); border-color: var(--brand-accent); color: #fff; }
+.product-button.primary:hover:not(:disabled) { filter: brightness(.94); background: var(--brand-accent); }
+.product-button.danger { border-color: #dc262660; color: #b91c1c; background: #fef2f2; }
+.product-button:disabled { opacity: .5; cursor: not-allowed; }
+.product-notice { padding: 14px 16px; border: 1px solid rgb(var(--surface-700)); background: rgb(var(--surface-800) / .3); border-radius: 10px; font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
+.product-notice.error { color: #991b1b; background: #fff1f2; border-color: #fecdd3; }
+.product-notice.success { color: #166534; background: #f0fdf4; border-color: #bbf7d0; }
+.product-notice.warning { color: #92400e; background: #fffbeb; border-color: #fde68a; }
+.product-tag { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; line-height: 1.5; border: 1px solid var(--border-subtle); background: rgb(var(--surface-800) / .35); border-radius: 999px; padding: 4px 10px; white-space: nowrap; }
+.product-tag.success { color: #166534; border-color: #bbf7d0; background: #f0fdf4; }
+.product-tag.warning { color: #92400e; border-color: #fde68a; background: #fffbeb; }
+.product-toggle { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; line-height: 1.7; }
+.product-toggle input { accent-color: var(--brand-accent); width: 18px; height: 18px; margin-top: 3px; flex-shrink: 0; }
+.product-divider { border: 0; border-top: 1px solid var(--border-subtle); margin-block: 24px; }
+.product-empty { padding: 38px 20px; text-align: center; color: rgb(var(--surface-400)); font-size: 14px; line-height: 1.8; }
+.product-list { display: grid; gap: 0; }
+.product-list > * { display: flex; justify-content: space-between; align-items: center; gap: 14px; padding-block: 14px; border-bottom: 1px solid var(--border-subtle); min-width: 0; }
+.product-list > *:last-child { border-bottom: 0; }
+.product-mono { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; overflow-wrap: anywhere; }
+.product-stat { font-size: 32px; font-weight: 700; line-height: 1.2; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
+.product-table-wrap { width: 100%; overflow-x: auto; }
+.product-table { border-collapse: collapse; width: 100%; text-align: left; font-size: 14px; }
+.product-table th { font-size: 12px; font-weight: 600; color: rgb(var(--surface-400)); }
+.product-table th, .product-table td { padding: 13px 10px; border-bottom: 1px solid var(--border-subtle); }
+.product-table a { color: var(--brand-accent); text-decoration: underline; text-underline-offset: 3px; }
+@media (max-width: 700px) { .product-grid { grid-template-columns: minmax(0, 1fr); } .product-header { flex-wrap: wrap; margin-bottom: 22px; } .product-card { padding: 20px; } .product-input { font-size: 16px; } .product-page { padding: 20px 16px; } }
+@media (prefers-reduced-motion: reduce) { .product-button { transition: none; } }

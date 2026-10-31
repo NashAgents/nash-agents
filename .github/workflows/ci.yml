@@ -1,0 +1,186 @@
+name: Validation
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: validation-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24.14.0'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            apps/web/package-lock.json
+      - run: node scripts/product-audit.js --history
+      - run: npm ci --ignore-scripts --registry=https://registry.npmjs.org
+      - run: npm ci --prefix apps/web --ignore-scripts --registry=https://registry.npmjs.org
+      - run: npm audit --audit-level=moderate --registry=https://registry.npmjs.org
+      - run: npm audit --prefix apps/web --audit-level=moderate --registry=https://registry.npmjs.org
+      - run: node scripts/dependency-notices.js --check
+  unit-and-build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24.14.0'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            apps/web/package-lock.json
+      - run: npm ci --registry=https://registry.npmjs.org
+      - run: npm ci --prefix apps/web --registry=https://registry.npmjs.org
+      - if: runner.os == 'Windows'
+        run: npm run build:helper:win32
+      - run: npm run typecheck
+      - run: npm run typecheck:web
+      - run: npm run build:all
+      - name: Unit tests
+        id: unit
+        run: npm run test:unit
+      # 作业日志需要仓库权限才能读取；失败时以 check-run annotation 形式（无需登录即可读取）
+      # 精确到「哪个测试文件、哪条断言」，避免只能看到 "Process completed with exit code 1"。
+      - name: Locate failing unit file
+        if: failure() && steps.unit.outcome == 'failure'
+        shell: bash
+        run: |
+          iso_home="$(mktemp -d)"
+          for f in test/*.test.ts; do
+            case "$(basename "$f")" in
+              mcp-bilibili-e2e.test.ts|cluster-real-llm-*.test.ts|windows-sandbox-agentloop-e2e.test.ts|live-e2e.test.ts|real-model-orchestration-e2e.test.ts) continue ;;
+              browser*.test.ts|web-workbench-browser.test.ts) continue ;;
+              cluster-postgres*.test.ts|runtime-observability-storage.test.ts) continue ;;
+              linux-*.test.ts|windows-sandbox*.test.ts|sandbox.test.ts|sandbox-runtime-environment.test.ts|posix-capability-verification.test.ts|cluster-sandbox-policy-and-cross-platform.test.ts|cli-e2e.test.ts) continue ;;
+            esac
+            if ! NASH_HOME="$iso_home" node --import tsx --test --test-concurrency=1 --test-timeout=120000 "$f" > "unit-diag.log" 2>&1; then
+              detail="$(grep -E '^(not ok|# fail|  (Assertion|Error|Type|Range|Reference)[A-Za-z]*Error)' unit-diag.log | tail -n 12 | sed -e 's/%/%25/g' -e 's/\r//g' | tr '\n' '~')"
+              echo "::error title=UNIT-FAIL $(basename "$f")::${f}%0A${detail}"
+            fi
+          done
+          rm -f unit-diag.log
+      - run: node scripts/verify-package.js
+  windows-release-helper:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24.14.0'
+          cache: npm
+      - run: npm ci --registry=https://registry.npmjs.org
+      - run: npm run build:helper:win32
+        id: helper
+      - run: npm run test:platform
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ always() && steps.helper.outcome == 'success' }}
+        with:
+          name: windows-release-helper
+          path: |
+            native/bin/win32-x64/nash-windows-sandbox-helper.exe
+            native/bin/win32-x64/nash-windows-sandbox-helper.exe.manifest.json
+          if-no-files-found: error
+          retention-days: 7
+  postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24.14.0'
+          cache: npm
+      - run: npm ci --registry=https://registry.npmjs.org
+      - name: Create an isolated PostgreSQL fixture
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql
+          sudo systemctl start postgresql
+          fixture_password="$(openssl rand -hex 24)"
+          echo "::add-mask::$fixture_password"
+          sudo -u postgres psql -v ON_ERROR_STOP=1 -c "CREATE ROLE nash_test LOGIN PASSWORD '$fixture_password';"
+          sudo -u postgres createdb --owner=nash_test nash_test
+          echo "NASH_TEST_DATABASE_URL=postgresql://nash_test:$fixture_password@127.0.0.1:5432/nash_test" >> "$GITHUB_ENV"
+      - run: npm run build
+      - run: npm run test:database
+      - name: Remove database fixture
+        if: always()
+        run: |
+          sudo -u postgres dropdb --if-exists nash_test
+          sudo -u postgres dropuser --if-exists nash_test
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24.14.0'
+          cache: npm
+      - run: npm ci --registry=https://registry.npmjs.org
+      - run: npm ci --prefix apps/web --registry=https://registry.npmjs.org
+      - run: npm run build:all
+      - run: npm run test:browser
+  native-sandbox:
+    if: github.event_name == 'workflow_dispatch'
+    needs: windows-release-helper
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24.14.0'
+          cache: npm
+      - run: npm ci --registry=https://registry.npmjs.org
+      # The portable protocol contract validates the actual helper manifest on every OS.
+      - if: runner.os != 'Windows'
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4
+        with:
+          name: windows-release-helper
+          path: native/bin/win32-x64
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y bubblewrap gcc
+      - if: runner.os == 'Linux'
+        run: npm run build:helper:linux
+      # Bubblewrap drops DAC override; the root-run test process must be able to
+      # traverse the disposable runner's home to reach the checkout and helper.
+      - if: runner.os == 'Linux'
+        run: |
+          chmod o+x "$HOME"
+          sudo bwrap --ro-bind / / --dev /dev --proc /proc --cap-drop ALL \
+            --chdir "$GITHUB_WORKSPACE" -- "$GITHUB_WORKSPACE/native/bin/linux-x64/nash-linux-sandbox-helper" --version-json
+      - if: runner.os == 'Windows'
+        run: npm run build:helper:win32
+      - run: npm run build
+      # The Linux suite exercises real delegated cgroups and creates an isolated
+      # unprivileged test user, so it needs privileges on the disposable runner.
+      - if: runner.os == 'Linux'
+        run: sudo env "PATH=$PATH" npm run test:platform
+      - if: runner.os != 'Linux'
+        run: npm run test:platform

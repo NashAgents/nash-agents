@@ -1,0 +1,119 @@
+{
+  "name": "nash-agents",
+  "version": "0.1.0",
+  "description": "Nash Agents: distributed autonomous agent execution with native sandboxes and verifiable task orchestration.",
+  "main": "dist/index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "bin": {
+    "nash": "./dist/index.js",
+    "nash-agents": "./dist/index.js"
+  },
+  "engines": {
+    "node": ">=24.14.0 <25"
+  },
+  "scripts": {
+    "prepublishOnly": "node scripts/prepublish-guard.js",
+    "postinstall": "node scripts/postinstall.js",
+    "build": "tsc -p tsconfig.build.json && node scripts/write-build-info.js",
+    "build:web": "npm run build --prefix apps/web && node scripts/write-web-build-info.js",
+    "build:all": "npm run build && npm run build:web",
+    "build:watch": "tsc -p tsconfig.build.json --watch",
+    "typecheck": "tsc --noEmit",
+    "typecheck:web": "npm run typecheck --prefix apps/web",
+    "build:helper:win32": "node scripts/build-windows-helper.js",
+    "dev": "tsx src/index.ts",
+    "test": "node scripts/run-tests.js all",
+    "build:helper:linux": "node scripts/build-linux-helper.js",
+    "test:unit": "node scripts/run-tests.js unit",
+    "test:platform": "node scripts/run-tests.js platform",
+    "test:database": "node scripts/run-tests.js database",
+    "test:browser": "node scripts/run-tests.js browser",
+    "test:live": "node scripts/run-tests.js live",
+    "start": "node dist/index.js start",
+    "init": "node dist/index.js init",
+    "audit:product": "node scripts/product-audit.js",
+    "audit:dependencies": "npm audit --audit-level=moderate && npm audit --prefix apps/web --audit-level=moderate",
+    "verify:package": "node scripts/verify-package.js",
+    "licenses:generate": "node scripts/dependency-notices.js",
+    "licenses:check": "node scripts/dependency-notices.js --check"
+  },
+  "keywords": [
+    "agent",
+    "autonomous-agent",
+    "ai",
+    "coordinator",
+    "worker",
+    "sandbox",
+    "bubblewrap",
+    "seatbelt",
+    "security",
+    "distributed-systems"
+  ],
+  "author": "Kenny <972899678@qq.com>",
+  "license": "Apache-2.0",
+  "type": "module",
+  "devDependencies": {
+    "@modelcontextprotocol/server": "^2.3.1",
+    "@types/node": "^26.4.1",
+    "@types/pg": "^8.23.1",
+    "@types/ws": "^8.18.2",
+    "pinia": "^4.1.0",
+    "playwright-core": "^1.64.1",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2",
+    "vue": "^3.5.44"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/client": "^2.3.1",
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/exporter-logs-otlp-http": "^0.222.0",
+    "@opentelemetry/exporter-metrics-otlp-http": "^0.222.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.222.0",
+    "@opentelemetry/resources": "^2.11.0",
+    "@opentelemetry/sdk-logs": "^0.222.0",
+    "@opentelemetry/sdk-metrics": "^2.11.0",
+    "@opentelemetry/sdk-trace-base": "^2.11.0",
+    "@opentelemetry/semantic-conventions": "^1.43.0",
+    "dotenv": "^18.0.1",
+    "pg": "^8.23.1",
+    "string-width": "^8.3.0",
+    "strip-ansi": "^7.2.0",
+    "ws": "^8.22.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NashAgents/nash-agents.git"
+  },
+  "homepage": "https://github.com/NashAgents/nash-agents",
+  "bugs": {
+    "url": "https://github.com/NashAgents/nash-agents/issues"
+  },
+  "files": [
+    "dist/",
+    "apps/web/dist/",
+    "docs/",
+    "native/linux-sandbox-helper/",
+    "native/windows-sandbox-helper/",
+    "native/bin/",
+    "scripts/build-linux-helper.js",
+    "scripts/build-windows-helper.js",
+    "scripts/postinstall.js",
+    "scripts/prepublish-guard.js",
+    "scripts/install.sh",
+    "scripts/install.ps1",
+    "scripts/install-windows-product-service.ps1",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE",
+    "SECURITY.md",
+    "CONTRIBUTING.md",
+    "CHANGELOG.md",
+    "THIRD_PARTY_NOTICES.md"
+  ]
+}

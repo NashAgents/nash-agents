@@ -1,0 +1,34 @@
+{
+  "model": {
+    "baseUrl": "https://api.deepseek.com/v1",
+    "apiKey": "your_api_key_here",
+    "model": "deepseek-chat",
+    "contextWindow": 64000,
+    "compactionThreshold": 0.8
+  },
+  "context": {
+    "autoCompact": true,
+    "keepRecentMessages": 30,
+    "spill": {
+      "enabled": true,
+      "maxInlineChars": 50000,
+      "maxArtifactBytes": 16777216,
+      "maxSessionBytes": 268435456,
+      "maxGlobalBytes": 2147483648,
+      "retentionDays": 7
+    }
+  },
+  "sandbox": {
+    "// 说明": "可选 preset 快捷预设: 'default' | 'full' | 'read-only'",
+    "preset": "default",
+
+    "// filesystem": "'workspace-write' (默认) | 'read-only' | 'danger-full-access'",
+    "filesystem": "workspace-write",
+
+    "// network": "'deny' (默认内核阻断) | 'allow' (放行网络)",
+    "network": "deny",
+
+    "// approval": "'ask' (默认弹窗提权) | 'never' (直接拒绝不弹窗)",
+    "approval": "ask"
+  }
+}

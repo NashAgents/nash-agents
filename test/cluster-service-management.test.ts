@@ -1,0 +1,513 @@
+import { describe, it, before, after } from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import {
+  renderCoordinatorUnit,
+  renderWorkerUnit,
+  renderProductUnit,
+  ServiceUnitValidationError,
+} from "../src/cluster/service/unit-renderer.js";
+import {
+  installServiceUnits,
+  restartService,
+  serviceStatus,
+  ServiceManagerError,
+  type CommandResult,
+  type CommandRunner,
+} from "../src/cluster/service/service-manager.js";
+import {
+  parseServiceCommandArgs,
+  ClusterCliUsageError,
+} from "../src/cluster/cli/cluster-commands.js";
+import type { PreflightReport } from "../src/cluster/preflight/service-preflight.js";
+
+/**
+ * MOCK_UNIT：全部 systemd 交互经注入的 CommandRunner 完成，
+ * 不执行任何真实 systemctl，也不触碰 /etc。
+ */
+
+const BASE_INPUT = {
+  user: "nash",
+  group: "nash",
+  installDir: "/opt/nash-fixture",
+  nodePath: "/usr/bin/node",
+  envFile: "/etc/nash/nash-cluster.env",
+};
+
+const HARDENING_LINES = [
+  "Type=simple",
+  "WorkingDirectory=/opt/nash-fixture",
+  "EnvironmentFile=/etc/nash/nash-cluster.env",
+  "Restart=on-failure",
+  "RestartSec=10s",
+  "RestartPreventExitStatus=78",
+  "KillMode=control-group",
+  "TimeoutStopSec=30s",
+  "StartLimitIntervalSec=60s",
+  "StartLimitBurst=3",
+  "WantedBy=multi-user.target",
+];
+
+function recordingRunner(
+  responses: Record<string, CommandResult> = {},
+  fallback: CommandResult = { exitCode: 0, stdout: "", stderr: "" }
+): { runner: CommandRunner; calls: string[][] } {
+  const calls: string[][] = [];
+  const runner: CommandRunner = async (command, args) => {
+    calls.push([command, ...args]);
+    const key = [command, ...args].join(" ");
+    for (const [prefix, result] of Object.entries(responses)) {
+      if (key.startsWith(prefix)) return result;
+    }
+    return fallback;
+  };
+  return { runner, calls };
+}
+
+function report(ok: boolean, exitCode: number, classification?: "PERMANENT_CONFIG_ERROR" | "TRANSIENT_DEPENDENCY_ERROR"): PreflightReport {
+  return { ok, exitCode, classification, summary: ok ? "All preflight checks passed." : "Preflight blocked.", checks: [] };
+}
+
+describe("Nash Cluster optional systemd service management", () => {
+  let root: string;
+
+  before(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "nash-service-test-"));
+  });
+
+  after(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  // --------------------------------------------------------------------------
+  // A. Unit 渲染
+  // --------------------------------------------------------------------------
+  describe("A. Unit rendering", () => {
+    it("product unit starts the real product service and retries temporary startup failures", async () => {
+      const releaseId = "a".repeat(40);
+      const input = { ...BASE_INPUT, releaseId, afterServices: ["postgresql.service", "frpc.service"] };
+      const text = renderProductUnit(input);
+      assert.match(text, /ExecStart=\/usr\/bin\/node \/opt\/nash-fixture\/dist\/index\.js start --service\n/);
+      assert.match(text, /After=network-online\.target postgresql\.service frpc\.service\n/);
+      assert.match(text, /Restart=on-failure\nRestartSec=30s\n/);
+      assert.match(text, /StartLimitIntervalSec=0\n/);
+      assert.doesNotMatch(text, /RestartPreventExitStatus=78/);
+      assert.match(text, /TimeoutStopSec=300s\n/);
+      assert.ok(text.includes(releaseId));
+      assert.throws(() => renderProductUnit({ ...input, afterServices: ["frpc.service\nUser=root"] }), ServiceUnitValidationError);
+      assert.throws(() => renderProductUnit({ ...input, releaseId: "not-a-release" }), ServiceUnitValidationError);
+      assert.throws(() => renderProductUnit({ ...input, installDir: "/opt/$RUNTIME" }), ServiceUnitValidationError);
+
+      const { runner, calls } = recordingRunner();
+      const result = await installServiceUnits({ role: "product", input, unitDirectory: path.join(root, "product-dry-run"), runner });
+      assert.equal(result.unitName, "nash-product.service");
+      assert.equal(result.content, text);
+      assert.equal(result.written, false);
+      assert.equal(calls.length, 0);
+    });
+    it("A.1 coordinator unit carries every hardening directive and the exact inputs", () => {
+      const text = renderCoordinatorUnit({
+        ...BASE_INPUT,
+        host: "127.0.0.1",
+        port: 18444,
+        webDist: "/opt/nash-fixture/apps/web/dist",
+      });
+
+      for (const line of HARDENING_LINES) assert.ok(text.includes(`${line}\n`), `missing directive: ${line}`);
+      assert.ok(
+        text.includes(
+          "ExecStart=/usr/bin/node /opt/nash-fixture/dist/index.js cluster start --host 127.0.0.1 --port 18444 --web-dist /opt/nash-fixture/apps/web/dist\n"
+        )
+      );
+      assert.ok(!text.includes("--worker"), "collocated worker must stay opt-in");
+      assert.ok(text.startsWith("# Generated by `nash cluster service install`."), "unit must start with a generated-by comment");
+    });
+
+    it("A.2 worker unit starts `node start` and never references the coordinator port", () => {
+      const text = renderWorkerUnit({ ...BASE_INPUT, envFile: "/etc/nash/nash-worker.env" });
+      assert.ok(text.includes("ExecStart=/usr/bin/node /opt/nash-fixture/dist/index.js node start\n"));
+      assert.ok(!text.includes("--port"));
+      assert.ok(text.includes("EnvironmentFile=/etc/nash/nash-worker.env\n"));
+
+      const withCoordinator = renderWorkerUnit({
+        ...BASE_INPUT,
+        envFile: "/etc/nash/nash-worker.env",
+        coordinatorUrl: "wss://cluster.example.org/ws/cluster",
+      });
+      assert.ok(withCoordinator.includes("node start --coordinator wss://cluster.example.org/ws/cluster"));
+    });
+
+    it("A.3 units never embed credentials; secrets stay in EnvironmentFile", () => {
+      const text = renderCoordinatorUnit({ ...BASE_INPUT, host: "127.0.0.1", port: 18443 });
+      assert.ok(!/DATABASE_URL|API_KEY|PASSWORD|postgres/i.test(text));
+      assert.ok(text.includes("EnvironmentFile="));
+    });
+
+    it("A.4 newline injection in a path is rejected", () => {
+      assert.throws(
+        () => renderCoordinatorUnit({ ...BASE_INPUT, installDir: "/opt/nash\nExecStartPre=/bin/false", host: "127.0.0.1", port: 18443 }),
+        (error: unknown) => error instanceof ServiceUnitValidationError && error.field === "installDir"
+      );
+      assert.throws(
+        () => renderWorkerUnit({ ...BASE_INPUT, envFile: "/etc/nash/x.env\nUser=root" }),
+        (error: unknown) => error instanceof ServiceUnitValidationError && error.field === "envFile"
+      );
+    });
+
+    it("A.5 `;` in a description is rejected", () => {
+      assert.throws(
+        () => renderCoordinatorUnit({ ...BASE_INPUT, host: "127.0.0.1", port: 18443, unitDescription: "Nash; ExecStartPre=/bin/false" }),
+        (error: unknown) => error instanceof ServiceUnitValidationError && error.field === "unitDescription"
+      );
+      assert.throws(
+        () => renderWorkerUnit({ ...BASE_INPUT, unitDescription: "Nash\nUser=root" }),
+        (error: unknown) => error instanceof ServiceUnitValidationError
+      );
+    });
+
+    it("A.6 rejects relative paths, invalid ports and credential-bearing coordinator URLs", () => {
+      assert.throws(() => renderCoordinatorUnit({ ...BASE_INPUT, installDir: "opt/nash", host: "127.0.0.1", port: 18443 }), /absolute POSIX path/);
+      assert.throws(() => renderCoordinatorUnit({ ...BASE_INPUT, installDir: "/opt/../etc", host: "127.0.0.1", port: 18443 }), /\.\./);
+      assert.throws(() => renderCoordinatorUnit({ ...BASE_INPUT, host: "127.0.0.1", port: 0 }), ServiceUnitValidationError);
+      assert.throws(() => renderCoordinatorUnit({ ...BASE_INPUT, host: "127.0.0.1", port: 70000 }), ServiceUnitValidationError);
+      assert.throws(() => renderCoordinatorUnit({ ...BASE_INPUT, host: "127.0.0.1", port: 18443, user: "nash root" }), ServiceUnitValidationError);
+      assert.throws(
+        () => renderWorkerUnit({ ...BASE_INPUT, coordinatorUrl: "wss://someone:secret@cluster.example.org/ws" }),
+        (error: unknown) => error instanceof ServiceUnitValidationError && error.field === "coordinatorUrl"
+      );
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // B. 安装（默认 dry-run）
+  // --------------------------------------------------------------------------
+  describe("B. installServiceUnits", () => {
+    it("B.1 dry-run writes nothing, creates no directory and runs no command", async () => {
+      const { runner, calls } = recordingRunner();
+      const unitDirectory = path.join(root, "b1-dry-run");
+      const result = await installServiceUnits({ role: "coordinator", input: { ...BASE_INPUT, host: "127.0.0.1", port: 18443 }, unitDirectory, runner });
+
+      assert.equal(result.dryRun, true);
+      assert.equal(result.written, false);
+      assert.equal(result.unitPath, path.join(unitDirectory, "nash-cluster.service"));
+      assert.ok(result.content.includes("StartLimitBurst=3"));
+      assert.equal(fs.existsSync(unitDirectory), false, "dry-run must not create the unit directory");
+      assert.equal(calls.length, 0, "dry-run must not touch systemctl");
+      assert.ok(result.actions.every((action) => action.executed === false));
+    });
+
+    it("B.2 write without force refuses to clobber an existing unit", async () => {
+      const { runner, calls } = recordingRunner();
+      const unitDirectory = path.join(root, "b2-no-force");
+      fs.mkdirSync(unitDirectory, { recursive: true });
+      const unitPath = path.join(unitDirectory, "nash-cluster.service");
+      fs.writeFileSync(unitPath, "OLD UNIT CONTENT\n");
+
+      const result = await installServiceUnits({
+        role: "coordinator",
+        input: { ...BASE_INPUT, host: "127.0.0.1", port: 18443 },
+        unitDirectory,
+        write: true,
+        runner,
+      });
+
+      assert.equal(result.refused, true);
+      assert.equal(result.written, false);
+      assert.match(result.reason ?? "", /already exists/);
+      assert.equal(fs.readFileSync(unitPath, "utf8"), "OLD UNIT CONTENT\n");
+      assert.equal(calls.length, 0);
+    });
+
+    it("B.3 force overwrites the existing unit with the hardened template", async () => {
+      const { runner } = recordingRunner();
+      const unitDirectory = path.join(root, "b3-force");
+      fs.mkdirSync(unitDirectory, { recursive: true });
+      const unitPath = path.join(unitDirectory, "nash-cluster.service");
+      fs.writeFileSync(unitPath, "OLD UNIT CONTENT\n");
+
+      const result = await installServiceUnits({
+        role: "coordinator",
+        input: { ...BASE_INPUT, host: "127.0.0.1", port: 18443 },
+        unitDirectory,
+        write: true,
+        force: true,
+        runner,
+      });
+
+      assert.equal(result.refused, false);
+      assert.equal(result.written, true);
+      const written = fs.readFileSync(unitPath, "utf8");
+      assert.ok(!written.includes("OLD UNIT CONTENT"));
+      assert.ok(written.includes("StartLimitBurst=3"));
+      assert.ok(written.includes("RestartPreventExitStatus=78"));
+    });
+
+    it("B.4 daemon-reload / enable / start are skipped unless explicitly requested", async () => {
+      const { runner, calls } = recordingRunner();
+      const unitDirectory = path.join(root, "b4-no-enable");
+      const result = await installServiceUnits({
+        role: "worker",
+        input: BASE_INPUT,
+        unitDirectory,
+        write: true,
+        runner,
+      });
+
+      assert.equal(result.written, true);
+      assert.equal(calls.length, 0);
+      assert.deepEqual(result.actions.map((action) => action.action), ["daemon-reload", "enable", "start"]);
+      assert.ok(result.actions.every((action) => !action.executed && /not requested/.test(action.skippedReason ?? "")));
+    });
+
+    it("B.5 enable:true runs daemon-reload, enable and start in order", async () => {
+      const { runner, calls } = recordingRunner();
+      const unitDirectory = path.join(root, "b5-enable");
+      const result = await installServiceUnits({
+        role: "worker",
+        unitName: "nash-worker-fixture.service",
+        input: BASE_INPUT,
+        unitDirectory,
+        write: true,
+        enable: true,
+        runner,
+      });
+
+      assert.equal(result.written, true);
+      assert.deepEqual(calls, [
+        ["systemctl", "daemon-reload"],
+        ["systemctl", "enable", "nash-worker-fixture.service"],
+        ["systemctl", "start", "nash-worker-fixture.service"],
+      ]);
+      assert.ok(result.actions.every((action) => action.executed && action.exitCode === 0));
+    });
+
+    it("B.6 enable:true without write executes nothing", async () => {
+      const { runner, calls } = recordingRunner();
+      const unitDirectory = path.join(root, "b6-enable-no-write");
+      const result = await installServiceUnits({
+        role: "coordinator",
+        input: { ...BASE_INPUT, host: "127.0.0.1", port: 18443 },
+        unitDirectory,
+        enable: true,
+        runner,
+      });
+
+      assert.equal(result.written, false);
+      assert.equal(calls.length, 0);
+      assert.equal(fs.existsSync(unitDirectory), false);
+    });
+
+    it("B.7 rejects unit names that could escape the unit directory", async () => {
+      const { runner } = recordingRunner();
+      await assert.rejects(
+        installServiceUnits({ role: "worker", unitName: "../evil.service", input: BASE_INPUT, unitDirectory: path.join(root, "b7"), runner }),
+        ServiceManagerError
+      );
+      await assert.rejects(
+        installServiceUnits({ role: "worker", unitName: "nash-worker", input: BASE_INPUT, unitDirectory: path.join(root, "b7"), runner }),
+        ServiceManagerError
+      );
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // C. 重启前置预检
+  // --------------------------------------------------------------------------
+  describe("C. restartService", () => {
+    it("C.1 refuses to restart when preflight reports a permanent config error (78)", async () => {
+      const { runner, calls } = recordingRunner();
+      const result = await restartService("nash-cluster.service", {
+        confirm: true,
+        runner,
+        preflight: async () => report(false, 78, "PERMANENT_CONFIG_ERROR"),
+      });
+
+      assert.equal(result.restarted, false);
+      assert.equal(result.exitCode, 78);
+      assert.equal(result.preflight.classification, "PERMANENT_CONFIG_ERROR");
+      assert.equal(calls.length, 0, "a failed preflight must never reach systemctl");
+    });
+
+    it("C.2 reports transient dependency failure (75) distinctly from 78", async () => {
+      const { runner, calls } = recordingRunner();
+      const result = await restartService("nash-worker.service", {
+        confirm: true,
+        runner,
+        preflight: async () => report(false, 75, "TRANSIENT_DEPENDENCY_ERROR"),
+      });
+
+      assert.equal(result.restarted, false);
+      assert.equal(result.exitCode, 75);
+      assert.equal(result.preflight.classification, "TRANSIENT_DEPENDENCY_ERROR");
+      assert.equal(calls.length, 0);
+    });
+
+    it("C.3 real preflight on a missing deployment directory blocks the restart with 78", async () => {
+      const { runner, calls } = recordingRunner();
+      const result = await restartService("nash-worker.service", {
+        confirm: true,
+        runner,
+        preflightOptions: {
+          workingDirectory: path.join(os.tmpdir(), `nash-missing-deploy-${Date.now()}`),
+          checkPort: false,
+          checkDatabase: false,
+        },
+      });
+
+      assert.equal(result.restarted, false);
+      assert.equal(result.exitCode, 78);
+      assert.equal(calls.length, 0);
+    });
+
+    it("C.4 preflight passing without --confirm does not restart", async () => {
+      const { runner, calls } = recordingRunner();
+      const result = await restartService("nash-cluster.service", {
+        runner,
+        preflight: async () => report(true, 0),
+      });
+
+      assert.equal(result.restarted, false);
+      assert.equal(result.exitCode, 1);
+      assert.match(result.reason, /confirmation/);
+      assert.equal(calls.length, 0);
+    });
+
+    it("C.5 preflight passing with --confirm restarts exactly once", async () => {
+      const { runner, calls } = recordingRunner();
+      const result = await restartService("nash-cluster.service", {
+        confirm: true,
+        runner,
+        preflight: async () => report(true, 0),
+      });
+
+      assert.equal(result.restarted, true);
+      assert.equal(result.exitCode, 0);
+      assert.deepEqual(calls, [["systemctl", "restart", "nash-cluster.service"]]);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // D. 只读状态
+  // --------------------------------------------------------------------------
+  describe("D. serviceStatus", () => {
+    it("D.1 reports available:false when systemctl is missing, without throwing", async () => {
+      const { runner } = recordingRunner({}, { exitCode: 127, stdout: "", stderr: "systemctl: not found" });
+      const status = await serviceStatus("nash-cluster.service", { runner });
+
+      assert.equal(status.available, false);
+      assert.match(status.unavailableReason ?? "", /127/);
+      assert.equal(status.hasInfiniteRestartRisk, false);
+      assert.equal(status.diagnostic.loaded, false);
+    });
+
+    it("D.2 parses a hardened unit and clears the infinite restart risk", async () => {
+      const { runner, calls } = recordingRunner({
+        "systemctl --version": { exitCode: 0, stdout: "systemd 255", stderr: "" },
+        "systemctl show": {
+          exitCode: 0,
+          stdout: [
+            "LoadState=loaded",
+            "ActiveState=active",
+            "SubState=running",
+            "UnitFileState=enabled",
+            "WorkingDirectory=/opt/nash-fixture",
+            "Restart=on-failure",
+            "RestartUSec=10s",
+            "StartLimitIntervalUSec=60000000",
+            "StartLimitBurst=3",
+            "RestartPreventExitStatus=78",
+            "ExecStart=/usr/bin/node /opt/nash-fixture/dist/index.js cluster start --host 127.0.0.1 --port 18444",
+          ].join("\n"),
+          stderr: "",
+        },
+      });
+
+      const status = await serviceStatus("nash-cluster.service", { runner });
+      assert.equal(status.available, true);
+      assert.equal(status.hasInfiniteRestartRisk, false);
+      assert.equal(status.diagnostic.startLimitIntervalSec, 60);
+      assert.equal(status.diagnostic.startLimitBurst, 3);
+      assert.deepEqual(status.diagnostic.restartPreventExitStatus, [78]);
+      assert.ok(calls.every((call) => !["restart", "start", "stop", "enable"].includes(call[1]!)), "status must stay read-only");
+    });
+
+    it("D.3 flags an unguarded restart policy as infinite restart risk", async () => {
+      const { runner } = recordingRunner({
+        "systemctl --version": { exitCode: 0, stdout: "systemd 255", stderr: "" },
+        "systemctl show": {
+          exitCode: 0,
+          stdout: [
+            "LoadState=loaded",
+            "ActiveState=active",
+            "UnitFileState=enabled",
+            "Restart=always",
+            "RestartUSec=5s",
+            "StartLimitIntervalUSec=10000000",
+            "StartLimitBurst=5",
+          ].join("\n"),
+          stderr: "",
+        },
+      });
+
+      const status = await serviceStatus("nash-worker.service", { runner });
+      assert.equal(status.available, true);
+      assert.equal(status.hasInfiniteRestartRisk, true);
+      assert.match(status.diagnostic.riskReason ?? "", /without EX_CONFIG \(78\) guard/);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // E. CLI 参数解析
+  // --------------------------------------------------------------------------
+  describe("E. CLI argument parsing", () => {
+    it("requires an explicit product release and refuses an unverified product restart", () => {
+      const sha = "a".repeat(40);
+      const parsed = parseServiceCommandArgs(["install", "--role", "product", "--release", sha, "--service-env-file", "/etc/nash/product.env"]);
+      assert.equal(parsed.releaseId, sha);
+      assert.equal(parsed.envFile, "/etc/nash/product.env");
+      assert.throws(() => parseServiceCommandArgs(["install", "--role", "product"]), ClusterCliUsageError);
+      assert.throws(() => parseServiceCommandArgs(["restart", "--role", "product", "--confirm"]), /drain/);
+    });
+    it("E.1 status is read-only by default", () => {
+      const options = parseServiceCommandArgs(["status"]);
+      assert.equal(options.action, "status");
+      assert.equal(options.role, "coordinator");
+      assert.equal(options.write, false);
+      assert.equal(options.confirm, false);
+      assert.equal(options.json, false);
+    });
+
+    it("E.2 install defaults to dry-run (no write, no enable)", () => {
+      const options = parseServiceCommandArgs(["install", "--role", "worker"]);
+      assert.equal(options.action, "install");
+      assert.equal(options.role, "worker");
+      assert.equal(options.write, false);
+      assert.equal(options.enable, false);
+      assert.equal(options.dryRun, false);
+    });
+
+    it("E.3 restart requires an explicit --confirm flag to be parsed as confirmed", () => {
+      assert.equal(parseServiceCommandArgs(["restart"]).confirm, false);
+      assert.equal(parseServiceCommandArgs(["restart", "--confirm"]).confirm, true);
+    });
+
+    it("E.4 unknown flags and actions are usage errors, never silently ignored", () => {
+      assert.throws(() => parseServiceCommandArgs(["install", "--bogus"]), ClusterCliUsageError);
+      assert.throws(() => parseServiceCommandArgs(["install", "--enabel"]), ClusterCliUsageError);
+      assert.throws(() => parseServiceCommandArgs(["status", "--confirm"]), ClusterCliUsageError);
+      assert.throws(() => parseServiceCommandArgs(["explode"]), ClusterCliUsageError);
+      assert.throws(() => parseServiceCommandArgs([]), ClusterCliUsageError);
+    });
+
+    it("E.5 missing values, invalid roles and conflicting flags are rejected", () => {
+      assert.throws(() => parseServiceCommandArgs(["install", "--unit"]), /requires a value/);
+      assert.throws(() => parseServiceCommandArgs(["install", "--unit", "--json"]), /requires a value/);
+      assert.throws(() => parseServiceCommandArgs(["install", "--role", "overlord"]), /Invalid --role/);
+      assert.throws(() => parseServiceCommandArgs(["install", "--write", "--dry-run"]), /mutually exclusive/);
+      assert.throws(() => parseServiceCommandArgs(["status", "extra"]), /Unexpected argument/);
+    });
+  });
+});

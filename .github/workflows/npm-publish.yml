@@ -1,0 +1,102 @@
+name: Prepare and publish npm package
+
+on:
+  workflow_dispatch:
+    inputs:
+      dist_tag:
+        description: npm distribution tag
+        required: true
+        default: latest
+
+permissions:
+  contents: read
+
+jobs:
+  windows-helper:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24.14.0'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run build:helper:win32
+      - run: npm run build
+      - run: npm run test:platform
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-helper
+          path: |
+            native/bin/win32-x64/nash-windows-sandbox-helper.exe
+            native/bin/win32-x64/nash-windows-sandbox-helper.exe.manifest.json
+          if-no-files-found: error
+          retention-days: 1
+
+  verify-and-pack:
+    needs: windows-helper
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24.14.0'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            apps/web/package-lock.json
+      - run: npm ci --ignore-scripts
+      - run: npm ci --prefix apps/web --ignore-scripts
+      - run: npm run build:helper:linux
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: windows-helper
+          path: native/bin/win32-x64
+      - run: npm run typecheck && npm run typecheck:web
+      - run: npm run build:all
+      - run: npm run test:unit
+      - run: npm run audit:product && npm run audit:dependencies && npm run licenses:check
+      - run: node scripts/verify-package.js --release
+      - name: Pack and checksum the verified artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm pack --ignore-scripts
+          sha256sum nash-agents-*.tgz > SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: verified-npm-package
+          path: |
+            nash-agents-*.tgz
+            SHA256SUMS
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    if: github.ref == 'refs/heads/main'
+    needs: verify-and-pack
+    runs-on: ubuntu-latest
+    environment: npm-release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24.14.0'
+          registry-url: 'https://registry.npmjs.org'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: verified-npm-package
+      - name: Publish the exact verified tarball
+        shell: bash
+        env:
+          DIST_TAG: ${{ inputs.dist_tag }}
+          NASH_PERMIT_PUBLISH: 'true'
+        run: |
+          set -euo pipefail
+          [[ ${#DIST_TAG} -le 64 && "$DIST_TAG" =~ ^[a-zA-Z][a-zA-Z0-9._-]*$ ]] || { echo 'Invalid npm distribution tag' >&2; exit 1; }
+          sha256sum --check SHA256SUMS
+          npm publish ./nash-agents-*.tgz --provenance --access public --tag "$DIST_TAG"
