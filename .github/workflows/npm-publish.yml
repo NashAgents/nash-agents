@@ -1,28 +1,93 @@
-name: Prepare and publish npm package
+name: Stage npm release
 
+# Release contract:
+#   - Triggered by a lightweight tag (v*) or a manual run on an existing tag ref.
+#   - The tag must point at the commit that passed both Validation event types.
+#   - The staged tarball is the exact tarball that was tested and SHA-256 verified.
+#   - npm login is a stage-only credential from the npm-release environment.
+#   - This workflow never runs `npm publish` and never approves a staged package.
 on:
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
-    inputs:
-      dist_tag:
-        description: npm distribution tag
-        required: true
-        default: latest
 
 permissions:
   contents: read
 
+concurrency:
+  group: npm-release
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '24.14.0'
+  NPM_CLI_VERSION: '11.21.1'
+  EXPECTED_VERSION: '0.1.0'
+  EXPECTED_TAG: 'v0.1.0'
+
 jobs:
+  release-guard:
+    name: Verify tag, source and prior CI
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      commit: ${{ steps.guard.outputs.commit }}
+      tag: ${{ steps.guard.outputs.tag }}
+      version: ${{ steps.guard.outputs.version }}
+      push_run_url: ${{ steps.guard.outputs.push_run_url }}
+      dispatch_run_url: ${{ steps.guard.outputs.dispatch_run_url }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Verify the lightweight tag, version and prior Validation runs
+        id: guard
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/verify-release-source.js --require-ci
+
   windows-helper:
+    name: Build and test Windows helper
+    needs: release-guard
     runs-on: windows-latest
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.release-guard.outputs.commit }}
+          fetch-depth: 0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: '24.14.0'
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
-      - run: npm ci --ignore-scripts
+      - name: Verify the checkout is the release commit
+        shell: pwsh
+        env:
+          RELEASE_COMMIT: ${{ needs.release-guard.outputs.commit }}
+        run: |
+          $head = (git rev-parse HEAD).Trim()
+          if ($head -ne $env:RELEASE_COMMIT) {
+            throw "Checkout $head is not the release commit $env:RELEASE_COMMIT"
+          }
+          Write-Output "checkout=$head"
+      - run: npm ci --ignore-scripts --registry=https://registry.npmjs.org
       - run: npm run build:helper:win32
+      - name: Verify the Windows helper is bound to the release commit
+        shell: pwsh
+        env:
+          RELEASE_COMMIT: ${{ needs.release-guard.outputs.commit }}
+        run: |
+          node scripts/verify-release-artifact.js helper `
+            --root . `
+            --manifest native/bin/win32-x64/nash-windows-sandbox-helper.exe.manifest.json `
+            --commit $env:RELEASE_COMMIT
       - run: npm run build
       - run: npm run test:platform
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -35,68 +100,372 @@ jobs:
           retention-days: 1
 
   verify-and-pack:
-    needs: windows-helper
+    name: Verify, test and pack
+    needs: [release-guard, windows-helper]
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.release-guard.outputs.commit }}
+          fetch-depth: 0
+          fetch-tags: true
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: '24.14.0'
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: |
             package-lock.json
             apps/web/package-lock.json
-      - run: npm ci --ignore-scripts
-      - run: npm ci --prefix apps/web --ignore-scripts
+      - name: Set up the pinned npm CLI
+        run: |
+          set -euo pipefail
+          npm_prefix="$RUNNER_TEMP/npm-cli"
+          npm install --prefix "$npm_prefix" "npm@${NPM_CLI_VERSION}" --ignore-scripts --no-audit --no-fund
+          npm_cli="$npm_prefix/node_modules/.bin/npm"
+          installed="$("$npm_cli" --version)"
+          node -e 'const [major, minor] = process.argv[1].split(".").map(Number); if (major < 11 || (major === 11 && minor < 15)) { console.error(`npm ${process.argv[1]} is older than 11.15.0`); process.exit(1); }' "$installed"
+          echo "npm_cli=$npm_cli" >> "$GITHUB_ENV"
+          echo "Using npm CLI $installed (requires >= 11.15.0 for staged publishing)"
+      - name: Verify the checkout and tag still point at the release commit
+        env:
+          RELEASE_COMMIT: ${{ needs.release-guard.outputs.commit }}
+        run: |
+          set -euo pipefail
+          head="$(git rev-parse HEAD)"
+          [ "$head" = "$RELEASE_COMMIT" ] || { echo "checkout $head is not the release commit $RELEASE_COMMIT" >&2; exit 1; }
+          [ "${GITHUB_SHA}" = "$RELEASE_COMMIT" ] || { echo "GITHUB_SHA ${GITHUB_SHA} is not the release commit $RELEASE_COMMIT" >&2; exit 1; }
+          [ "$(git cat-file -t "refs/tags/${EXPECTED_TAG}")" = "commit" ] || { echo "tag ${EXPECTED_TAG} is not lightweight" >&2; exit 1; }
+          [ "$(git rev-parse "refs/tags/${EXPECTED_TAG}")" = "$RELEASE_COMMIT" ] || { echo "tag ${EXPECTED_TAG} does not point at $RELEASE_COMMIT" >&2; exit 1; }
+          echo "release commit: $head"
+      - run: npm ci --ignore-scripts --registry=https://registry.npmjs.org
+      - run: npm ci --prefix apps/web --ignore-scripts --registry=https://registry.npmjs.org
       - run: npm run build:helper:linux
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: windows-helper
           path: native/bin/win32-x64
-      - run: npm run typecheck && npm run typecheck:web
-      - run: npm run build:all
-      - run: npm run test:unit
-      - run: npm run audit:product && npm run audit:dependencies && npm run licenses:check
-      - run: node scripts/verify-package.js --release
-      - name: Pack and checksum the verified artifact
-        shell: bash
+      - name: Verify both native helpers are bound to the release commit
+        env:
+          RELEASE_COMMIT: ${{ needs.release-guard.outputs.commit }}
         run: |
           set -euo pipefail
-          npm pack --ignore-scripts
-          sha256sum nash-agents-*.tgz > SHA256SUMS
+          node scripts/verify-release-artifact.js helper --root . \
+            --manifest native/bin/linux-x64/nash-linux-sandbox-helper.manifest.json \
+            --commit "$RELEASE_COMMIT"
+          node scripts/verify-release-artifact.js helper --root . \
+            --manifest native/bin/win32-x64/nash-windows-sandbox-helper.exe.manifest.json \
+            --commit "$RELEASE_COMMIT"
+      - run: npm run typecheck && npm run typecheck:web
+      - run: npm run build:all
+      - name: Verify the workspace build identity
+        env:
+          RELEASE_COMMIT: ${{ needs.release-guard.outputs.commit }}
+        run: |
+          set -euo pipefail
+          node scripts/verify-release-artifact.js workspace --root . \
+            --commit "$RELEASE_COMMIT" \
+            --version "$EXPECTED_VERSION" \
+            --require-release-helpers
+          node scripts/verify-release-source.js
+      - run: npm run test:unit
+      - run: npm run audit:product && npm run audit:dependencies && npm run licenses:check
+      - name: Ensure tests did not modify release inputs
+        run: |
+          set -euo pipefail
+          changed="$(git status --porcelain --untracked-files=all -- src scripts package.json package-lock.json tsconfig.json tsconfig.build.json apps/web/src apps/web/package.json apps/web/package-lock.json native/linux-sandbox-helper native/windows-sandbox-helper)"
+          if [ -n "$changed" ]; then
+            echo "Release inputs changed after the build:" >&2
+            echo "$changed" >&2
+            exit 1
+          fi
+      - run: node scripts/verify-package.js --release
+      - name: Pack, checksum and bind the exact release tarball
+        env:
+          RELEASE_COMMIT: ${{ needs.release-guard.outputs.commit }}
+        run: |
+          set -euo pipefail
+          rm -f nash-agents-*.tgz SHA256SUMS release-manifest.json
+          "$npm_cli" pack --ignore-scripts
+          count="$(find . -maxdepth 1 -type f -name 'nash-agents-*.tgz' -print | wc -l | tr -d ' ')"
+          [ "$count" -eq 1 ] || { echo "expected exactly one tarball, found $count" >&2; exit 1; }
+          tarball="$(find . -maxdepth 1 -type f -name 'nash-agents-*.tgz' -print -quit)"
+          tarball="${tarball#./}"
+          [ "$tarball" = "nash-agents-${EXPECTED_VERSION}.tgz" ] || { echo "unexpected tarball name: $tarball" >&2; exit 1; }
+          sha256sum "$tarball" > SHA256SUMS
+          node scripts/verify-release-artifact.js tarball \
+            --tarball "$tarball" \
+            --checksums SHA256SUMS \
+            --commit "$RELEASE_COMMIT" \
+            --version "$EXPECTED_VERSION" \
+            --tag "$EXPECTED_TAG" \
+            --manifest-out release-manifest.json
+          echo "release tarball: $tarball"
+          echo "sha256: $(sha256sum "$tarball" | awk '{print $1}')"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: verified-npm-package
           path: |
             nash-agents-*.tgz
             SHA256SUMS
+            release-manifest.json
           if-no-files-found: error
           retention-days: 7
 
   publish:
-    if: github.ref == 'refs/heads/main'
-    needs: verify-and-pack
+    name: Stage the verified tarball on npm
+    needs: [release-guard, verify-and-pack]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     environment: npm-release
     permissions:
       contents: read
       id-token: write
+    outputs:
+      stage_id: ${{ steps.stage.outputs.stage_id }}
+      tarball_sha256: ${{ steps.verify.outputs.sha256 }}
+      staged_tarball_sha256: ${{ steps.stage.outputs.staged_tarball_sha256 }}
+      provenance_status: ${{ steps.stage.outputs.provenance_status }}
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.release-guard.outputs.commit }}
+          fetch-depth: 0
+          fetch-tags: true
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: '24.14.0'
-          registry-url: 'https://registry.npmjs.org'
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Set up the pinned npm CLI
+        run: |
+          set -euo pipefail
+          npm_prefix="$RUNNER_TEMP/npm-cli"
+          npm install --prefix "$npm_prefix" "npm@${NPM_CLI_VERSION}" --ignore-scripts --no-audit --no-fund
+          npm_cli="$npm_prefix/node_modules/.bin/npm"
+          installed="$("$npm_cli" --version)"
+          node -e 'const [major, minor] = process.argv[1].split(".").map(Number); if (major < 11 || (major === 11 && minor < 15)) { console.error(`npm ${process.argv[1]} is older than 11.15.0`); process.exit(1); }' "$installed"
+          echo "npm_cli=$npm_cli" >> "$GITHUB_ENV"
+          echo "Using npm CLI $installed (requires >= 11.15.0 for staged publishing)"
+      - name: Verify the checkout and tag before using any credential
+        env:
+          RELEASE_COMMIT: ${{ needs.release-guard.outputs.commit }}
+        run: |
+          set -euo pipefail
+          head="$(git rev-parse HEAD)"
+          [ "$head" = "$RELEASE_COMMIT" ] || { echo "checkout $head is not the release commit $RELEASE_COMMIT" >&2; exit 1; }
+          [ "${GITHUB_SHA}" = "$RELEASE_COMMIT" ] || { echo "GITHUB_SHA ${GITHUB_SHA} is not the release commit $RELEASE_COMMIT" >&2; exit 1; }
+          [ "$(git cat-file -t "refs/tags/${EXPECTED_TAG}")" = "commit" ] || { echo "tag ${EXPECTED_TAG} is not lightweight" >&2; exit 1; }
+          [ "$(git rev-parse "refs/tags/${EXPECTED_TAG}")" = "$RELEASE_COMMIT" ] || { echo "tag ${EXPECTED_TAG} does not point at $RELEASE_COMMIT" >&2; exit 1; }
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: verified-npm-package
-      - name: Publish the exact verified tarball
-        shell: bash
+      - name: Verify the downloaded tarball before authentication
+        id: verify
         env:
-          DIST_TAG: ${{ inputs.dist_tag }}
-          NASH_PERMIT_PUBLISH: 'true'
+          RELEASE_COMMIT: ${{ needs.release-guard.outputs.commit }}
         run: |
           set -euo pipefail
-          [[ ${#DIST_TAG} -le 64 && "$DIST_TAG" =~ ^[a-zA-Z][a-zA-Z0-9._-]*$ ]] || { echo 'Invalid npm distribution tag' >&2; exit 1; }
+          count="$(find . -maxdepth 1 -type f -name 'nash-agents-*.tgz' -print | wc -l | tr -d ' ')"
+          [ "$count" -eq 1 ] || { echo "expected exactly one downloaded tarball, found $count" >&2; exit 1; }
+          tarball="$(find . -maxdepth 1 -type f -name 'nash-agents-*.tgz' -print -quit)"
+          tarball="${tarball#./}"
+          [ "$tarball" = "nash-agents-${EXPECTED_VERSION}.tgz" ] || { echo "unexpected tarball name: $tarball" >&2; exit 1; }
           sha256sum --check SHA256SUMS
-          npm publish ./nash-agents-*.tgz --provenance --access public --tag "$DIST_TAG"
+          node scripts/verify-release-artifact.js tarball \
+            --tarball "$tarball" \
+            --checksums SHA256SUMS \
+            --commit "$RELEASE_COMMIT" \
+            --version "$EXPECTED_VERSION" \
+            --tag "$EXPECTED_TAG"
+          digest="$(sha256sum "$tarball" | awk '{print $1}')"
+          {
+            echo "tarball=$tarball"
+            echo "sha256=$digest"
+          } >> "$GITHUB_OUTPUT"
+          echo "verified $tarball ($digest)"
+      - name: Stage the exact verified tarball and verify the staged bytes
+        id: stage
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_STAGE_TOKEN }}
+          NASH_PERMIT_PUBLISH: 'true'
+          RELEASE_COMMIT: ${{ needs.release-guard.outputs.commit }}
+          TARBALL: ${{ steps.verify.outputs.tarball }}
+          TARBALL_SHA: ${{ steps.verify.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          npmrc="$RUNNER_TEMP/npm-release.npmrc"
+          cleanup() { rm -f "$npmrc"; }
+          trap cleanup EXIT
+          umask 077
+          printf '%s\n' \
+            'registry=https://registry.npmjs.org/' \
+            '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}' > "$npmrc"
+          export NPM_CONFIG_USERCONFIG="$npmrc"
+
+          echo "Authenticated npm preflight:"
+          "$npm_cli" whoami --registry=https://registry.npmjs.org
+
+          stage_stdout="$RUNNER_TEMP/stage-result.json"
+          stage_stderr="$RUNNER_TEMP/stage-stderr.log"
+          set +e
+          "$npm_cli" stage publish "$TARBALL" --provenance --access public --tag latest --json >"$stage_stdout" 2>"$stage_stderr"
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ]; then
+            echo "npm stage publish failed (exit $status). npm output follows:" >&2
+            sed -E 's/(_authToken[=:][[:space:]]*)[^[:space:]]+/\1***REDACTED***/g; s/(Bearer[[:space:]]+)[^[:space:]]+/\1***REDACTED***/g' "$stage_stderr" >&2 || true
+            exit "$status"
+          fi
+          cat "$stage_stderr"
+
+          stage_id="$(node -e '
+            const fs = require("node:fs");
+            const parsed = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            const entry = parsed.stageId ? parsed : Object.values(parsed)[0];
+            const id = entry && entry.stageId;
+            if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id ?? "")) {
+              console.error("npm stage publish did not return a valid stageId");
+              process.exit(1);
+            }
+            process.stdout.write(id);
+          ' "$stage_stdout")"
+          echo "stage id: $stage_id"
+
+          stage_view="$RUNNER_TEMP/stage-view.json"
+          "$npm_cli" stage view "$stage_id" --json > "$stage_view"
+          node -e '
+            const fs = require("node:fs");
+            const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            const scalar = {};
+            for (const [key, entry] of Object.entries(value)) {
+              if (entry === null || ["string", "number", "boolean"].includes(typeof entry)) scalar[key] = entry;
+            }
+            console.log("Staged package metadata:", JSON.stringify(scalar, null, 2));
+            const provenanceKeys = Object.keys(value).filter((key) => /provenance|sigstore|attest/i.test(key));
+            console.log("Provenance-related stage fields:", provenanceKeys.join(", ") || "(none)");
+          ' "$stage_view"
+
+          staged_dir="$RUNNER_TEMP/staged"
+          rm -rf "$staged_dir"
+          mkdir -p "$staged_dir"
+          pushd "$staged_dir" >/dev/null
+          "$npm_cli" stage download "$stage_id" --json > download-result.json
+          staged_count="$(find . -maxdepth 1 -type f -name '*.tgz' -print | wc -l | tr -d ' ')"
+          staged_file="$(find . -maxdepth 1 -type f -name '*.tgz' -print -quit)"
+          popd >/dev/null
+          [ "$staged_count" -eq 1 ] || { echo "expected one downloaded staged tarball, found $staged_count" >&2; exit 1; }
+          staged_tgz="$staged_dir/${staged_file#./}"
+          staged_sha="$(sha256sum "$staged_tgz" | awk '{print $1}')"
+          echo "verified tarball SHA-256: $TARBALL_SHA"
+          echo "staged tarball SHA-256:   $staged_sha"
+          [ "$staged_sha" = "$TARBALL_SHA" ] || { echo "STAGED TARBALL DIFFERS FROM THE VERIFIED ARTIFACT" >&2; exit 1; }
+          node scripts/verify-release-artifact.js tarball \
+            --tarball "$staged_tgz" \
+            --commit "$RELEASE_COMMIT" \
+            --version "$EXPECTED_VERSION" \
+            --tag "$EXPECTED_TAG" \
+            --allow-renamed
+
+          provenance_status="requested-not-confirmed"
+          if grep -q "Signed provenance statement" "$stage_stderr"; then
+            provenance_status="signed"
+          fi
+          tlog_url="$(grep -oE 'https://search\.sigstore\.dev/\?logIndex=[0-9]+' "$stage_stderr" | tail -n1 || true)"
+          if [ -n "$tlog_url" ]; then
+            provenance_status="signed+transparency-log"
+          fi
+
+          stage_manifest="$RUNNER_TEMP/stage-manifest.json"
+          jq -n \
+            --arg stageId "$stage_id" \
+            --arg version "$EXPECTED_VERSION" \
+            --arg tag "$EXPECTED_TAG" \
+            --arg commit "$RELEASE_COMMIT" \
+            --arg tarballSha "$TARBALL_SHA" \
+            --arg stagedSha "$staged_sha" \
+            --arg provenanceStatus "$provenance_status" \
+            --arg tlogUrl "$tlog_url" \
+            --arg runId "$GITHUB_RUN_ID" \
+            --arg runUrl "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --arg ref "$GITHUB_REF" \
+            --arg sha "$GITHUB_SHA" \
+            '{
+              schemaVersion: 1,
+              package: "nash-agents",
+              version: $version,
+              tag: $tag,
+              commit: $commit,
+              stageId: $stageId,
+              tarball: ("nash-agents-" + $version + ".tgz"),
+              tarballSha256: $tarballSha,
+              stagedTarballSha256: $stagedSha,
+              provenance: { status: $provenanceStatus, transparencyLogUrl: ($tlogUrl | if . == "" then null else . end) },
+              workflow: { runId: $runId, runUrl: $runUrl, ref: $ref, sha: $sha },
+              npmStageResult: "stage-result.json",
+              npmStageView: "stage-view.json",
+              status: "staged-awaiting-maintainer-approval"
+            }' > "$stage_manifest"
+
+          {
+            echo "stage_id=$stage_id"
+            echo "staged_tarball_sha256=$staged_sha"
+            echo "provenance_status=$provenance_status"
+            echo "tlog_url=$tlog_url"
+          } >> "$GITHUB_OUTPUT"
+      - name: Report release status without approving
+        env:
+          STAGE_ID: ${{ steps.stage.outputs.stage_id }}
+          TARBALL_SHA: ${{ steps.verify.outputs.sha256 }}
+          STAGED_SHA: ${{ steps.stage.outputs.staged_tarball_sha256 }}
+          PROVENANCE_STATUS: ${{ steps.stage.outputs.provenance_status }}
+          TLOG_URL: ${{ steps.stage.outputs.tlog_url }}
+          PUSH_RUN_URL: ${{ needs.release-guard.outputs.push_run_url }}
+          DISPATCH_RUN_URL: ${{ needs.release-guard.outputs.dispatch_run_url }}
+          RELEASE_COMMIT: ${{ needs.release-guard.outputs.commit }}
+        run: |
+          set -euo pipefail
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          {
+            echo "## npm staged release: nash-agents@${EXPECTED_VERSION}"
+            echo
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Workflow run | $run_url |"
+            echo "| Tag | \`${EXPECTED_TAG}\` |"
+            echo "| Commit | \`${RELEASE_COMMIT}\` |"
+            echo "| Validation (push) | ${PUSH_RUN_URL:-n/a} |"
+            echo "| Validation (workflow_dispatch) | ${DISPATCH_RUN_URL:-n/a} |"
+            echo "| Version | \`${EXPECTED_VERSION}\` |"
+            echo "| Verified tarball SHA-256 | \`${TARBALL_SHA}\` |"
+            echo "| Staged tarball SHA-256 | \`${STAGED_SHA}\` |"
+            echo "| Stage ID | \`${STAGE_ID}\` |"
+            echo "| Provenance | ${PROVENANCE_STATUS}${TLOG_URL:+ ($TLOG_URL)} |"
+            echo
+            echo "**Status: staged on npm, awaiting maintainer 2FA approval.**"
+            echo
+            echo "Approve personally with 2FA; automation does not approve:"
+            echo
+            echo '```'
+            echo "npm stage approve $STAGE_ID"
+            echo '```'
+            echo
+            echo "Automation did not run \`npm publish\` or \`npm stage approve\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "GitHub Actions run: $run_url"
+          echo "Stage ID: $STAGE_ID"
+          echo "Version: $EXPECTED_VERSION"
+          echo "Verified tarball SHA-256: $TARBALL_SHA"
+          echo "Staged tarball SHA-256: $STAGED_SHA"
+          echo "Provenance: $PROVENANCE_STATUS${TLOG_URL:+ $TLOG_URL}"
+          echo "Awaiting maintainer 2FA approval; no approval was performed by automation."
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: staged-release-metadata
+          path: |
+            ${{ runner.temp }}/stage-result.json
+            ${{ runner.temp }}/stage-view.json
+            ${{ runner.temp }}/staged/download-result.json
+            ${{ runner.temp }}/stage-manifest.json
+            SHA256SUMS
+            release-manifest.json
+          if-no-files-found: error
+          retention-days: 30

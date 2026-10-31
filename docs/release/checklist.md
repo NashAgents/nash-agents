@@ -20,4 +20,14 @@
 - [ ] 安装文档不将未发布的 `npm install -g nash-agents` 当作已存在的官方分发方式。
 - [ ] 维护者独立授权发布行为。
 
-[验证矩阵](verification.md) · [Release Notes 模板](release-notes-template.md)
+## npm Staged Publishing
+
+- [ ] 使用 [npm Staged Publishing 流程](npm-staged-publishing.md)；npm CLI >= 11.15.0。
+- [ ] `npm-release` Environment 仅保存 Stage-only GAT（`read-write-stage-only`），不使用高权限或 bypass 2FA Token。
+- [ ] `v0.1.0` 为轻量标签，指向 `main` 上同时通过 push 与 workflow_dispatch Validation 的实际发布提交。
+- [ ] 工作流只 stage 已通过测试与 SHA-256 校验的同一个 tarball，并用 `npm stage download` 逐字节复核。
+- [ ] 维护者本人通过 2FA 审批；自动化不得运行 `npm publish` 或 `npm stage approve`。
+- [ ] 审批后验证 registry 版本、`latest`、Provenance 与源码提交一致，再做隔离环境真实安装。
+- [ ] 切换 Trusted Publishing 后移除临时 Token，并撤销临时凭据。
+
+[发布流程](npm-staged-publishing.md) · [验证矩阵](verification.md) · [Release Notes 模板](release-notes-template.md)
