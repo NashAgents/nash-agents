@@ -7,7 +7,10 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: validation-${{ github.ref }}
+  # Release gating needs a successful push run and a successful workflow_dispatch
+  # run for the same commit. Keep those event types in separate groups so the
+  # manual native-sandbox run cannot cancel the push validation.
+  group: validation-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 jobs:
   security:
