@@ -28,6 +28,6 @@
 - [ ] 工作流只 stage 已通过测试与 SHA-256 校验的同一个 tarball，并用 `npm stage download` 逐字节复核。
 - [ ] 维护者本人通过 2FA 审批；自动化不得运行 `npm publish` 或 `npm stage approve`。
 - [ ] 审批后验证 registry 版本、`latest`、Provenance 与源码提交一致，再做隔离环境真实安装。
-- [ ] Trusted Publishing 仅授予 `--allow-stage-publish`，并通过 `workflow_dispatch` 的 `verify_oidc` 无 Token 校验；临时 Token 已撤销。
+- [ ] Trusted Publishing 仅授予 `--allow-stage-publish`；不为验证虚构版本或测试 Stage。OIDC 真实 Stage Publishing 在下一个真实版本验证，否则明确标记为未验证；临时 Token 已撤销。
 
 [发布流程](npm-staged-publishing.md) · [验证矩阵](verification.md) · [Release Notes 模板](release-notes-template.md)

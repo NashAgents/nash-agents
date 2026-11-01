@@ -41,7 +41,7 @@
    - 使用 GitHub Actions OIDC（`id-token: write`）与 npm Trusted Publishing；不读取任何 npm Token Secret。
    - 下载并再次校验测试过的 tarball；`sha256sum --check` 通过后才认证。
    - 执行 `npm stage publish <tarball> --provenance --access public --tag latest`（npm CLI 自动完成 OIDC 交换）。
-   - `npm stage view` / `npm stage download` 自身不触发 OIDC 交换，因此工作流会再用 GitHub OIDC token 换取一次短期 stage token（仅写入临时 `.npmrc`、日志中掩码、随步骤删除），用于下载 staged tarball、逐字节比较 SHA-256 并再次校验内部提交绑定。该 token 不是长期 Secret。
+   - `npm stage view` / `npm stage download` 自身不触发 OIDC 交换，因此工作流会在 **stage 之前**用 GitHub OIDC token 换取一次短期 stage token（仅写入临时 `.npmrc`、日志中掩码、随步骤删除），用于下载 staged tarball、逐字节比较 SHA-256 并再次校验内部提交绑定。交换失败会在创建 Stage 前中止，避免留下未验证的 staged 版本。该 token 不是长期 Secret，且 `npm stage publish` 本身仍使用 CLI 自己的 OIDC 交换。
    - 输出 Run URL、Stage ID、版本、两个 SHA-256 与 Provenance 状态。
    - **到此停止**：不执行 `npm publish`，不执行 `npm stage approve`。
 
@@ -109,14 +109,12 @@ npm trust list nash-agents
 - GitHub Owner `NashAgents`、Repository `nash-agents`、Workflow `npm-publish.yml`、Environment `npm-release` 必须与 trust 配置一致。
 - 工作流保留 `id-token: write`，发布路径不读取任何 npm Token Secret。
 
-无 Token 校验（不会发布、不会审批）：
+## 首次验证状态与 48 小时有效期
 
-```bash
-gh workflow run npm-publish.yml -R NashAgents/nash-agents --ref main -f verify_oidc=true
-```
+- 信任关系创建成功 **不等于** OIDC 发布已验证。必须区分：信任配置成功、OIDC token 交换成功、OIDC 真实 Stage Publishing 成功、Stage 获得维护者 2FA 审批并公开发布。
+- npm 官方文档：新建的 trusted publisher 必须在 **2 天（48 小时）内完成首次成功发布**。首次成功发布会校验配置并绑定仓库的不可变身份；逾期未校验的配置会过期且无法再编辑，只能在包设置中删除后重新创建。
+- 官方文档未明确说明 `npm stage publish` 是否单独构成“首次成功发布”。因此不得假定 Stage 创建成功即完成校验，也不得为了验证而虚构新版本或测试 Stage。
+- `v0.1.0` 使用 Stage-only GAT 完成发布，**不属于** OIDC 真实发布验证。在下一个真实版本通过 OIDC `npm stage publish` 并完成审批之前，OIDC Stage Publishing 视为**未验证**。
+- 如果 trust 在下一个真实版本前过期：删除过期配置，重新创建 trust，并在 48 小时内执行真实发布。
 
-该作业在 `npm-release` Environment 中仅凭 OIDC 交换得到短期 npm token，然后尝试 stage 已发布的 `0.1.0`；registry 必须拒绝重复版本，因此不会产生新的 staged 版本。日志出现 `Successfully retrieved and set token` 且没有 `ENEEDAUTH` 即证明 OIDC 链路可用。
-
-随后作业会再用同一 OIDC 流程换取一次短期 token，调用认证的 stage 端点（`npm stage list` 与随机 stage id 的 not-found 检查），确认发布流程下载校验 staged tarball 所用的 token 路径可用。该作业永远不会执行 `npm stage approve`。
-
-切换到 OIDC 后提示维护者撤销此前临时创建的 Stage-only Token。
+切换到 OIDC 后提示维护者撤销此前临时创建的 Stage-only Token，并评估启用包的“Require two-factor authentication and disallow tokens”。该设置只影响传统 Token，不影响 Trusted Publishing。
