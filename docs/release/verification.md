@@ -24,7 +24,7 @@
 | 环境 | 已验证内容 |
 | --- | --- |
 | Linux x64（Ubuntu runner） | 从公共 registry 全新全局安装；`nash` 与 `nash-agents` 均报告 `Nash Agents v0.1.0`；build-info commit 与发布提交一致；linux-x64 helper SHA-256 与清单一致，报告 Landlock、seccomp 与 `noNewPrivs`；`npm audit signatures` 通过；`nash doctor` 退出码 0；无残留进程 |
-| Windows 11 x64（Windows runner） | 从公共 registry 全新全局安装；两个 CLI 入口均报告 `Nash Agents v0.1.0`；build-info commit 与发布提交一致；win32-x64 helper SHA-256 与清单一致，报告 Job Object、受限 Token、AppContainer、网络/文件隔离与完整性级别；`npm audit signatures` 通过；`nash doctor` 退出码 0；无残留进程 |
+| Windows x64（windows-latest runner） | 从公共 registry 全新全局安装；两个 CLI 入口均报告 `Nash Agents v0.1.0`；build-info commit 与发布提交一致；win32-x64 helper SHA-256 与清单一致，报告 Job Object、受限 Token、AppContainer、网络/文件隔离与完整性级别；`npm audit signatures` 通过；`nash doctor` 退出码 0；无残留进程 |
 
 发布验收同时核对 registry tarball 的 SHA-256/SHA-512 integrity 与 GitHub Release 资产一致，并确认 npm provenance 绑定 `refs/tags/v0.1.0`、仓库、工作流与发布提交。
 

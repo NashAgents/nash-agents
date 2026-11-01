@@ -1,6 +1,6 @@
 # Linux 安装
 
-已发布的 `nash-agents@0.1.0` 随附 linux-x64 helper，并已在 Linux x64 完成全新安装验收。本文档适用于源码安装和需要自行构建 helper 的场景；npm 安装步骤见 [README](../../README.md#install-from-npm-v010)。
+已发布的 `nash-agents@0.1.0` 随附 linux-x64 helper，并已在 Linux x64（GitHub Actions `ubuntu-latest`）完成全新安装验收。本文档适用于源码安装和需要自行构建 helper 的场景；npm 安装步骤见 [README](../../README.md#install-from-npm-v010)。
 
 目标环境为 Ubuntu 22.04 LTS x64；脚本也接受 Debian/Ubuntu 的其他版本及 Linux arm64，但必须单独验收内核、helper 与模型调用，不宣称自动兼容所有发行版。
 

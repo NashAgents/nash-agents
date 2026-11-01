@@ -1,6 +1,6 @@
 # Windows 安装
 
-已发布的 `nash-agents@0.1.0` 随附 win32-x64 helper，并已在 Windows 11 x64 完成全新安装验收。本文档适用于源码安装和需要自行构建 helper 的场景；npm 安装步骤见 [README](../../README.md#install-from-npm-v010)。
+已发布的 `nash-agents@0.1.0` 随附 win32-x64 helper，并已在 Windows x64（GitHub Actions `windows-latest`）完成全新安装验收。本文档适用于源码安装和需要自行构建 helper 的场景；npm 安装步骤见 [README](../../README.md#install-from-npm-v010)。
 
 目标环境为 Windows 11 x64。必须在目标机器上构建并验证原生 helper；Mac/Linux 上编译 TypeScript 不能证明 Windows 原生沙箱可用。
 
