@@ -6,8 +6,8 @@
 
 - npm CLI **>= 11.15.0**。工作流固定使用 `npm@11.21.1`，并在执行前断言版本不低于 11.15.0。
 - npm 账号已开启 2FA。
-- GitHub Environment `npm-release` 中存在 `NPM_STAGE_TOKEN`。
-- Token 必须是 Granular Access Token，包权限为 **`read-write-stage-only`**（Stage-only）。不得使用 `read-write`、bypass 2FA 或长期高权限 Token。
+- GitHub Environment `npm-release` 存在，且 npm Trusted Publishing 配置绑定同一 Environment。
+- Trusted Publishing 仅授予 **stage publish**（`npm trust github ... --allow-stage-publish`）。发布路径不读取任何长期 npm Token Secret。
 - 仓库与 npm 包均为公开访问；Provenance 需要公开仓库和 `id-token: write`。
 - `nash-agents` 在 npm 上尚不存在。npm 的 staged publishing 允许为不存在的包创建 staged 版本；Token 必须对该包名有写权限。
 
@@ -38,7 +38,7 @@
    - 类型检查、构建、工作区产物绑定校验、单元测试、依赖审计、许可证检查、`verify-package.js --release`。
    - 打包实际 tarball，生成 `SHA256SUMS`，并校验 tarball 内部的 `dist/build-info.json`、Web 构建信息、原生 helper manifest 全部绑定到发布提交。
 4. **publish**
-   - 使用 `npm-release` Environment 中的 Stage-only Token，仅通过 `NODE_AUTH_TOKEN` 传递。
+   - 使用 GitHub Actions OIDC（`id-token: write`）与 npm Trusted Publishing；不读取任何 npm Token Secret。
    - 下载并再次校验测试过的 tarball；`sha256sum --check` 通过后才认证。
    - 执行 `npm stage publish <tarball> --provenance --access public --tag latest`。
    - 通过 `npm stage view` 与 `npm stage download` 下载 staged tarball，逐字节比较 SHA-256，并再次校验内部提交绑定。
@@ -89,9 +89,9 @@ npm view nash-agents@0.1.0 dist.integrity dist.shasum
 - 真实模型 E2E 若未执行，必须明确记录为未覆盖，不得虚构结果。
 - 最后创建 GitHub Release `v0.1.0`，附上 tarball、`SHA256SUMS`、`release-manifest.json`、安装说明与准确的 Release Notes。Release 必须引用同一 tag/commit。
 
-## 切换到 npm Trusted Publishing
+## npm Trusted Publishing（OIDC）
 
-首次发布审批完成后，包已存在，才能配置 trust relationship：
+包已存在后，维护者本人经 2FA 创建 trust relationship：
 
 ```bash
 npm trust github nash-agents \
@@ -105,7 +105,16 @@ npm trust list nash-agents
 
 要求：
 
-- 仅授予 `--allow-stage-publish`，不启用不必要的直接发布权限。
-- 验证 OIDC 路径可用后，从工作流移除 `NPM_STAGE_TOKEN` / `NODE_AUTH_TOKEN` 依赖，保留 `id-token: write`。
-- 提示维护者撤销临时 Stage-only Token。
+- 仅授予 `--allow-stage-publish`，不启用 `--allow-publish` 等不必要的直接发布权限。
 - GitHub Owner `NashAgents`、Repository `nash-agents`、Workflow `npm-publish.yml`、Environment `npm-release` 必须与 trust 配置一致。
+- 工作流保留 `id-token: write`，发布路径不读取任何 npm Token Secret。
+
+无 Token 校验（不会发布、不会审批）：
+
+```bash
+gh workflow run npm-publish.yml -R NashAgents/nash-agents --ref main -f verify_oidc=true
+```
+
+该作业在 `npm-release` Environment 中仅凭 OIDC 交换得到短期 npm token，然后尝试 stage 已发布的 `0.1.0`；registry 必须拒绝重复版本。日志出现 `Successfully retrieved and set token` 且没有 `ENEEDAUTH` 即证明 OIDC 链路可用。该作业永远不会执行 `npm stage approve`。
+
+切换到 OIDC 后提示维护者撤销此前临时创建的 Stage-only Token。

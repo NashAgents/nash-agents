@@ -4,13 +4,19 @@ name: Stage npm release
 #   - Triggered by a lightweight tag (v*) or a manual run on an existing tag ref.
 #   - The tag must point at the commit that passed both Validation event types.
 #   - The staged tarball is the exact tarball that was tested and SHA-256 verified.
-#   - npm login is a stage-only credential from the npm-release environment.
+#   - Authentication is GitHub Actions OIDC through npm Trusted Publishing; no
+#     long-lived npm token secret is read by the release path.
 #   - This workflow never runs `npm publish` and never approves a staged package.
 on:
   push:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      verify_oidc:
+        description: 'Verify tokenless OIDC trusted publishing (no release, no approval)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -26,8 +32,63 @@ env:
   EXPECTED_TAG: 'v0.1.0'
 
 jobs:
+  verify-oidc:
+    name: Verify tokenless OIDC trusted publishing
+    if: ${{ inputs.verify_oidc == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: npm-release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Set up the pinned npm CLI
+        run: |
+          set -euo pipefail
+          npm_prefix="$RUNNER_TEMP/npm-cli"
+          npm install --prefix "$npm_prefix" "npm@${NPM_CLI_VERSION}" --ignore-scripts --no-audit --no-fund
+          npm_cli="$npm_prefix/node_modules/.bin/npm"
+          installed="$("$npm_cli" --version)"
+          node -e 'const [major, minor] = process.argv[1].split(".").map(Number); if (major < 11 || (major === 11 && minor < 15)) { console.error(`npm ${process.argv[1]} is older than 11.15.0`); process.exit(1); }' "$installed"
+          echo "npm_cli=$npm_cli" >> "$GITHUB_ENV"
+          echo "Using npm CLI $installed"
+      - name: Exchange GitHub OIDC for an npm token without any secret
+        run: |
+          set -euo pipefail
+          workdir="$(mktemp -d)"
+          cd "$workdir"
+          "$npm_cli" pack nash-agents@0.1.0 --registry=https://registry.npmjs.org --pack-destination . --silent
+          tarball="$(find . -maxdepth 1 -name 'nash-agents-0.1.0.tgz' -print -quit)"
+          [ -n "$tarball" ] || { echo "could not download the published tarball" >&2; exit 1; }
+          set +e
+          "$npm_cli" stage publish "$tarball" --tag latest --access public --provenance=false --loglevel verbose >oidc-stdout.log 2>oidc-stderr.log
+          stage_exit=$?
+          set -e
+          echo "stage_publish_exit=$stage_exit"
+          sed -E 's/(_authToken[=:][[:space:]]*)[^[:space:]]+/\1***REDACTED***/g; s/(Bearer[[:space:]]+)[^[:space:]]+/\1***REDACTED***/g' oidc-stderr.log \
+            | grep -Ei 'oidc|E4[0-9]{2}|ENEEDAUTH|publish|stage|token' | tail -40 || true
+          grep -q "Successfully retrieved and set token" oidc-stderr.log || {
+            echo "OIDC token exchange did not succeed; no token secret is configured" >&2
+            exit 1
+          }
+          if grep -q "ENEEDAUTH" oidc-stderr.log; then
+            echo "OIDC exchange did not yield usable credentials" >&2
+            exit 1
+          fi
+          echo "OIDC token exchange succeeded without any npm token secret."
+          echo "The probe deliberately reuses the already published 0.1.0; the registry must reject it."
+          if [ "$stage_exit" -eq 0 ]; then
+            echo "unexpected: staging the published 0.1.0 succeeded; investigate before approving anything" >&2
+            exit 1
+          fi
+
   release-guard:
     name: Verify tag, source and prior CI
+    if: ${{ inputs.verify_oidc != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -56,6 +117,7 @@ jobs:
   windows-helper:
     name: Build and test Windows helper
     needs: release-guard
+    if: ${{ inputs.verify_oidc != true }}
     runs-on: windows-latest
     timeout-minutes: 25
     steps:
@@ -102,6 +164,7 @@ jobs:
   verify-and-pack:
     name: Verify, test and pack
     needs: [release-guard, windows-helper]
+    if: ${{ inputs.verify_oidc != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
@@ -215,6 +278,7 @@ jobs:
   publish:
     name: Stage the verified tarball on npm
     needs: [release-guard, verify-and-pack]
+    if: ${{ inputs.verify_oidc != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: npm-release
@@ -285,25 +349,15 @@ jobs:
       - name: Stage the exact verified tarball and verify the staged bytes
         id: stage
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_STAGE_TOKEN }}
           NASH_PERMIT_PUBLISH: 'true'
           RELEASE_COMMIT: ${{ needs.release-guard.outputs.commit }}
           TARBALL: ${{ steps.verify.outputs.tarball }}
           TARBALL_SHA: ${{ steps.verify.outputs.sha256 }}
         run: |
           set -euo pipefail
-          npmrc="$RUNNER_TEMP/npm-release.npmrc"
-          cleanup() { rm -f "$npmrc"; }
-          trap cleanup EXIT
-          umask 077
-          printf '%s\n' \
-            'registry=https://registry.npmjs.org/' \
-            '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}' > "$npmrc"
-          export NPM_CONFIG_USERCONFIG="$npmrc"
-
-          echo "Authenticated npm preflight:"
-          "$npm_cli" whoami --registry=https://registry.npmjs.org
-
+          # No npm token secret is used. npm exchanges the GitHub Actions OIDC
+          # token for a short-lived package token authorized by the trusted
+          # publisher configuration (stage publish only).
           stage_stdout="$RUNNER_TEMP/stage-result.json"
           stage_stderr="$RUNNER_TEMP/stage-stderr.log"
           set +e

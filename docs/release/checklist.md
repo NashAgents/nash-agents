@@ -1,6 +1,6 @@
 # 发布准备检查清单
 
-目标版本：**0.1.0（未正式发布）**。仓库源码已公开，许可证 Apache-2.0。本清单不授权创建 Tag、GitHub Release、npm 包发布、强推、合并 PR 或生产变更。
+目标版本：**0.1.0（2026-11-01 已发布）**。仓库源码已公开，许可证 Apache-2.0。本清单不授权后续版本创建 Tag、GitHub Release、npm 包发布、强推、合并 PR 或生产变更。
 
 ## 源码与供应链
 
@@ -23,11 +23,11 @@
 ## npm Staged Publishing
 
 - [ ] 使用 [npm Staged Publishing 流程](npm-staged-publishing.md)；npm CLI >= 11.15.0。
-- [ ] `npm-release` Environment 仅保存 Stage-only GAT（`read-write-stage-only`），不使用高权限或 bypass 2FA Token。
+- [ ] 认证使用 npm Trusted Publishing（GitHub Actions OIDC）；`npm-release` Environment 不保存长期 npm Token。
 - [ ] `v0.1.0` 为轻量标签，指向 `main` 上同时通过 push 与 workflow_dispatch Validation 的实际发布提交。
 - [ ] 工作流只 stage 已通过测试与 SHA-256 校验的同一个 tarball，并用 `npm stage download` 逐字节复核。
 - [ ] 维护者本人通过 2FA 审批；自动化不得运行 `npm publish` 或 `npm stage approve`。
 - [ ] 审批后验证 registry 版本、`latest`、Provenance 与源码提交一致，再做隔离环境真实安装。
-- [ ] 切换 Trusted Publishing 后移除临时 Token，并撤销临时凭据。
+- [ ] Trusted Publishing 仅授予 `--allow-stage-publish`，并通过 `workflow_dispatch` 的 `verify_oidc` 无 Token 校验；临时 Token 已撤销。
 
 [发布流程](npm-staged-publishing.md) · [验证矩阵](verification.md) · [Release Notes 模板](release-notes-template.md)
