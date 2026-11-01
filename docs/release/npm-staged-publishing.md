@@ -40,8 +40,8 @@
 4. **publish**
    - 使用 GitHub Actions OIDC（`id-token: write`）与 npm Trusted Publishing；不读取任何 npm Token Secret。
    - 下载并再次校验测试过的 tarball；`sha256sum --check` 通过后才认证。
-   - 执行 `npm stage publish <tarball> --provenance --access public --tag latest`。
-   - 通过 `npm stage view` 与 `npm stage download` 下载 staged tarball，逐字节比较 SHA-256，并再次校验内部提交绑定。
+   - 执行 `npm stage publish <tarball> --provenance --access public --tag latest`（npm CLI 自动完成 OIDC 交换）。
+   - `npm stage view` / `npm stage download` 自身不触发 OIDC 交换，因此工作流会再用 GitHub OIDC token 换取一次短期 stage token（仅写入临时 `.npmrc`、日志中掩码、随步骤删除），用于下载 staged tarball、逐字节比较 SHA-256 并再次校验内部提交绑定。该 token 不是长期 Secret。
    - 输出 Run URL、Stage ID、版本、两个 SHA-256 与 Provenance 状态。
    - **到此停止**：不执行 `npm publish`，不执行 `npm stage approve`。
 
@@ -115,6 +115,8 @@ npm trust list nash-agents
 gh workflow run npm-publish.yml -R NashAgents/nash-agents --ref main -f verify_oidc=true
 ```
 
-该作业在 `npm-release` Environment 中仅凭 OIDC 交换得到短期 npm token，然后尝试 stage 已发布的 `0.1.0`；registry 必须拒绝重复版本。日志出现 `Successfully retrieved and set token` 且没有 `ENEEDAUTH` 即证明 OIDC 链路可用。该作业永远不会执行 `npm stage approve`。
+该作业在 `npm-release` Environment 中仅凭 OIDC 交换得到短期 npm token，然后尝试 stage 已发布的 `0.1.0`；registry 必须拒绝重复版本，因此不会产生新的 staged 版本。日志出现 `Successfully retrieved and set token` 且没有 `ENEEDAUTH` 即证明 OIDC 链路可用。
+
+随后作业会再用同一 OIDC 流程换取一次短期 token，调用认证的 stage 端点（`npm stage list` 与随机 stage id 的 not-found 检查），确认发布流程下载校验 staged tarball 所用的 token 路径可用。该作业永远不会执行 `npm stage approve`。
 
 切换到 OIDC 后提示维护者撤销此前临时创建的 Stage-only Token。

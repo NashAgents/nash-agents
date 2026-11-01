@@ -85,6 +85,58 @@ jobs:
             echo "unexpected: staging the published 0.1.0 succeeded; investigate before approving anything" >&2
             exit 1
           fi
+      - name: Verify the exchanged token can use authenticated stage endpoints
+        run: |
+          set -euo pipefail
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
+            echo "GitHub OIDC request environment is unavailable" >&2
+            exit 1
+          fi
+          oidc_response="$(curl -sS -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=npm:registry.npmjs.org")"
+          id_token="$(printf '%s' "$oidc_response" | node -e '
+            let s = "";
+            process.stdin.on("data", d => s += d).on("end", () => {
+              const value = JSON.parse(s).value;
+              if (!value) { console.error("OIDC response missing value"); process.exit(1); }
+              process.stdout.write(value);
+            });')"
+          exchange_response="$(curl -sS -X POST -H "Authorization: Bearer ${id_token}" \
+            "https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/nash-agents")"
+          stage_token="$(printf '%s' "$exchange_response" | node -e '
+            let s = "";
+            process.stdin.on("data", d => s += d).on("end", () => {
+              const token = JSON.parse(s).token;
+              if (!token) { console.error("OIDC exchange response missing token"); process.exit(1); }
+              process.stdout.write(token);
+            });')"
+          echo "::add-mask::$stage_token"
+          npmrc="$RUNNER_TEMP/oidc-verify.npmrc"
+          trap 'rm -f "$npmrc"' EXIT
+          umask 077
+          printf '%s\n' 'registry=https://registry.npmjs.org/' "//registry.npmjs.org/:_authToken=${stage_token}" > "$npmrc"
+          export NPM_CONFIG_USERCONFIG="$npmrc"
+          "$npm_cli" stage list nash-agents --json | tee stage-list.json
+          node -e '
+            const fs = require("node:fs");
+            if (!Array.isArray(JSON.parse(fs.readFileSync("stage-list.json", "utf8")))) {
+              throw new Error("unexpected stage list response");
+            }'
+          echo "Authenticated stage list succeeded with a short-lived OIDC-exchanged token."
+          set +e
+          "$npm_cli" stage view 00000000-0000-0000-0000-000000000000 --json > missing-stage.log 2>&1
+          view_exit=$?
+          set -e
+          cat missing-stage.log
+          if [ "$view_exit" -eq 0 ]; then
+            echo "unexpected: a random stage id resolved" >&2
+            exit 1
+          fi
+          if grep -qE "E401|E403|ENEEDAUTH" missing-stage.log; then
+            echo "the exchanged token was not accepted by stage endpoints" >&2
+            exit 1
+          fi
+          echo "Stage endpoints accepted the exchanged token (random id returned not-found)."
 
   release-guard:
     name: Verify tag, source and prior CI
@@ -383,6 +435,39 @@ jobs:
             process.stdout.write(id);
           ' "$stage_stdout")"
           echo "stage id: $stage_id"
+
+          # Stage read endpoints are authenticated and do not perform OIDC
+          # exchange themselves. Exchange the GitHub OIDC token once for a
+          # short-lived stage token so the staged bytes can be downloaded and
+          # byte-compared. No long-lived npm token is involved.
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
+            echo "GitHub OIDC request environment is unavailable" >&2
+            exit 1
+          fi
+          oidc_response="$(curl -sS -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=npm:registry.npmjs.org")"
+          id_token="$(printf '%s' "$oidc_response" | node -e '
+            let s = "";
+            process.stdin.on("data", d => s += d).on("end", () => {
+              const value = JSON.parse(s).value;
+              if (!value) { console.error("OIDC response missing value"); process.exit(1); }
+              process.stdout.write(value);
+            });')"
+          exchange_response="$(curl -sS -X POST -H "Authorization: Bearer ${id_token}" \
+            "https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/nash-agents")"
+          stage_token="$(printf '%s' "$exchange_response" | node -e '
+            let s = "";
+            process.stdin.on("data", d => s += d).on("end", () => {
+              const token = JSON.parse(s).token;
+              if (!token) { console.error("OIDC exchange response missing token"); process.exit(1); }
+              process.stdout.write(token);
+            });')"
+          echo "::add-mask::$stage_token"
+          verify_npmrc="$RUNNER_TEMP/stage-verify.npmrc"
+          trap 'rm -f "$verify_npmrc"' EXIT
+          umask 077
+          printf '%s\n' 'registry=https://registry.npmjs.org/' "//registry.npmjs.org/:_authToken=${stage_token}" > "$verify_npmrc"
+          export NPM_CONFIG_USERCONFIG="$verify_npmrc"
 
           stage_view="$RUNNER_TEMP/stage-view.json"
           "$npm_cli" stage view "$stage_id" --json > "$stage_view"
