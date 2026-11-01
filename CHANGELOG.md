@@ -1,8 +1,10 @@
 # Changelog
 
-Version 0.x is an evolving API. This file does not create an official Release, tag, npm package, or published binary.
+Version 0.x is an evolving API. This file records changes included in published versions; it does not itself create a Release, tag, or npm package.
 
-## 0.1.0 — Unreleased
+## 0.1.0 — 2026-11-01
+
+Released to npm and GitHub Releases: [nash-agents@0.1.0](https://www.npmjs.com/package/nash-agents/v/0.1.0) · [GitHub Release](https://github.com/NashAgents/nash-agents/releases/tag/v0.1.0). Tag `v0.1.0` points to source commit `62711107`.
 
 ### Features
 
@@ -24,7 +26,8 @@ Version 0.x is an evolving API. This file does not create an official Release, t
 - README (English and Chinese), architecture, demo, verification and release documents describe the delivered system, with neutral technical terminology and preserved third-party facts.
 - Repository description and topics are published on GitHub; no homepage is advertised.
 
-### Notes
+### Release verification
 
-- There is no official npm package or GitHub Release yet.
+- Fresh global installs from the public registry were accepted on Linux x64 and Windows x64: both CLI entrypoints, build-info commit, native helper digests, `npm audit signatures`, and `nash doctor` (exit 0). Real-model end-to-end runs were not part of this acceptance.
+- Only the linux-x64 and win32-x64 native helpers are shipped in 0.1.0.
 - Known limitations and verification scope are listed in [verification](docs/release/verification.md).

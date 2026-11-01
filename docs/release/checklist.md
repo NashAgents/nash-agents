@@ -17,7 +17,7 @@
 - [ ] 项目授权、Grant/撤销 ACK、原生沙箱、MCP 安全边界、GoalRun/Graph 与事件恢复具备可复核证据。
 - [ ] 备份与恢复、数据库迁移、admission freeze/drain、未知副作用任务防重放有明确操作手册。
 - [ ] GitHub Description、Topics、Homepage 已人工核对；不能把生产 IP 用作公开主页。
-- [ ] 安装文档不将未发布的 `npm install -g nash-agents` 当作已存在的官方分发方式。
+- [ ] 安装文档中的分发方式与真实状态一致：已发布版本指向实际的 npm 包与 GitHub Release，未发布版本不得把 `npm install -g nash-agents` 写成官方分发方式。
 - [ ] 维护者独立授权发布行为。
 
 ## npm Staged Publishing

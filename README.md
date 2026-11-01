@@ -13,7 +13,7 @@
 - **Durable state and recovery.** PostgreSQL stores cluster state while SQLite stores administrator and versioned configuration. A Worker Journal with sequenced events and ACK survives disconnects; tasks with unknown side effects stay `outcome_unknown` instead of being retried.
 - **Operations.** Admission freeze/drain proves there is no live work before a stop, systemd and Windows Task Scheduler supervise the service, release artifacts are verified by digest and running process identity, and the web control plane streams real state over SSE.
 
-Version **0.1.0** is being prepared. The source repository is public. There is no published npm package or official release artifact yet. Platform acceptance results must be checked in the [verification matrix](docs/release/verification.md); source availability does not imply every integration has passed.
+Version **0.1.0** was released on **2026-11-01**: [npm package](https://www.npmjs.com/package/nash-agents) · [GitHub Release](https://github.com/NashAgents/nash-agents/releases/tag/v0.1.0). Release acceptance covered fresh global installs from the public registry on Linux x64 and Windows x64; real-model end-to-end runs were not part of that acceptance. Platform and protocol scope is recorded in the [verification matrix](docs/release/verification.md); source availability does not imply every integration has passed.
 
 ## Requirements
 
@@ -24,40 +24,56 @@ Version **0.1.0** is being prepared. The source repository is public. There is n
 - A model endpoint that supports the chosen protocol and tool calls, with your own API credentials.
 - Local storage is supported for a single Coordinator. PostgreSQL is recommended for production persistence; it is separate from the SQLite administrator/configuration database.
 
-## npm installation (after an official release)
+## Install from npm (v0.1.0)
 
-Once published or using the pre-release tarball:
+Requires Node.js **>=24.14.0 <25** and npm. The published package ships native sandbox helpers for **linux-x64** and **win32-x64** only.
 
 ```bash
-# Global installation
+# Install the exact released version
+npm install -g nash-agents@0.1.0
+
+# Or install the latest published version
 npm install -g nash-agents
 
+nash --version   # Nash Agents v0.1.0
+```
+
+```bash
 # 1. Initialize this node (Coordinator + Worker, Coordinator, or Worker)
 nash init
 
-# 2. Verify platform native sandbox and isolation
+# 2. Verify the native sandbox and environment
 nash doctor
 
 # 3. Start the node service
 nash start --background
 
-# 4. Check cluster status
+# 4. Inspect local and cluster state
 nash status
 nash node list
-
-# On remote worker nodes:
-nash node join
 ```
 
-You can also run one-off tasks or initialization directly via `npx`:
+On a remote Worker, generate an invitation on the Coordinator with `nash node invite`, then run on the Worker:
 
 ```bash
-npx nash-agents init
+nash init --role worker
+nash node join
+nash start --background
 ```
 
-## Clone and build from Source
+See [Worker setup and revocation](docs/install/workers.md) for pairing, project access and reconnect behavior.
 
-The source repository is public and can be cloned over HTTPS without a token. An SSH remote is also available if you already have an SSH identity.
+The 0.1.0 registry package was accepted only on Linux x64 and Windows x64. macOS and other architectures are not covered by that acceptance; install from source where documented and validate the native sandbox on the target machine before relying on it.
+
+You can also run initialization directly via `npx` with the pinned version:
+
+```bash
+npx nash-agents@0.1.0 init
+```
+
+## Clone and build from source
+
+Use this path for development or for platforms not covered by the published native helpers. The source repository is public and can be cloned over HTTPS without a token. An SSH remote is also available if you already have an SSH identity.
 
 ```sh
 git clone https://github.com/NashAgents/nash-agents.git
@@ -99,7 +115,7 @@ See [Linux](docs/install/linux.md), [Windows](docs/install/windows.md), and [mac
 
 ## Initialize and start
 
-All commands run from the cloned checkout. No globally installed `nash` command is needed.
+For a source checkout, run all commands from the cloned checkout; a globally installed `nash` command is not required. If you installed from npm, use the `nash` commands shown above instead.
 
 ```sh
 node dist/index.js init
@@ -161,6 +177,8 @@ Product initialization defaults to the **restricted mode**: `workspace-write`, `
 
 Use [Web configuration](docs/operations/web.md), [diagnostics](docs/operations/troubleshooting.md), [backup and restore](docs/operations/backup-restore.md), and [upgrade](docs/operations/upgrade.md). Upgrade from an explicitly reviewed Git commit, preserve the complete product home and external PostgreSQL database, rebuild, validate, then restart. Reinstallation is not a data migration procedure.
 
+For an npm installation, back up first and then install a reviewed published version (for example `npm install -g nash-agents@<version>`), followed by `nash config validate`, `nash doctor`, and `nash start --background`. `nash upgrade --apply` only supports source Git checkouts.
+
 ## Demonstration, architecture and verification
 
 - [Architecture and execution boundaries](docs/operations/architecture.md)
@@ -171,6 +189,7 @@ Use [Web configuration](docs/operations/web.md), [diagnostics](docs/operations/t
 - [First-run walkthrough](docs/install/first-run.md)
 - [Architecture](docs/operations/architecture.md)
 - [Compatibility and acceptance matrix](docs/release/verification.md)
+- [npm package](https://www.npmjs.com/package/nash-agents), [GitHub Release v0.1.0](https://github.com/NashAgents/nash-agents/releases/tag/v0.1.0)
 - [Release checklist](docs/release/checklist.md), [release notes template](docs/release/release-notes-template.md)
 - [Contributing](CONTRIBUTING.md), [security reporting](SECURITY.md), [changelog](CHANGELOG.md)
 

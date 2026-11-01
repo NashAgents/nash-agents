@@ -4,7 +4,7 @@ Worker 是独立机器上的原生执行节点。SSH 仅用于部署管理，任
 
 ## 准备
 
-每台 Worker 独立克隆公开正式仓库、安装依赖、构建对应平台 helper。先运行 `doctor`（Windows 另运行 `sandbox doctor`），确认本机沙箱可用。为每个节点指定清晰名称和真实授权工作区。
+每台 Worker 优先使用已发布的 npm 包安装（`npm install -g nash-agents@0.1.0`），也可独立克隆公开正式仓库、安装依赖、构建对应平台 helper；使用 npm 安装时，下文的 `node dist/index.js` 替换为 `nash`。先运行 `doctor`（Windows 另运行 `sandbox doctor`），确认本机沙箱可用。为每个节点指定清晰名称和真实授权工作区。
 
 在 Coordinator：
 
