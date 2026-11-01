@@ -13,7 +13,7 @@
 - **持久状态与恢复**：PostgreSQL 保存集群状态，SQLite 保存管理员与版本化配置。Worker Journal 以序列化事件和 ACK 支撑断连恢复；副作用未知的任务保持 `outcome_unknown`，不会自动重试。
 - **运维能力**：Admission freeze/drain 以真实运行状态证明无在途工作后才停止服务；systemd 与 Windows Task Scheduler 托管服务；发布产物按摘要与运行进程身份校验；Web 控制台通过 SSE 展示真实状态。
 
-当前准备版本为 **0.1.0**，源码仓库已公开，尚未发布 npm 包或正式 Release。各平台实际验收情况见[验证矩阵](docs/release/verification.md)。源码具备某项能力不代表对应平台和外部服务已经验收通过。
+**0.1.0** 已于 **2026-11-01** 正式发布：[npm 包](https://www.npmjs.com/package/nash-agents) · [GitHub Release](https://github.com/NashAgents/nash-agents/releases/tag/v0.1.0)。发布验收覆盖 Linux x64 与 Windows x64 从公共 registry 的全新全局安装；真实模型端到端运行不在本次验收范围内。平台与协议范围以[验证矩阵](docs/release/verification.md)为准；源码具备某项能力不代表对应平台和外部服务已经验收通过。
 
 ## 环境要求
 
@@ -24,15 +24,22 @@
 - 支持所选协议和工具调用的模型服务，以及用户自己的 API 凭据。
 - 单 Coordinator 支持本地存储。生产持久化推荐 PostgreSQL；管理员和配置使用独立 SQLite 数据库。
 
-## npm 安装（正式发布后适用）
+## 从 npm 安装（v0.1.0）
 
-一旦正式发布或使用预发布安装包：
+需要 Node.js **>=24.14.0 且 <25** 与 npm。已发布的包仅随附 **linux-x64** 与 **win32-x64** 原生沙箱 helper。
 
 ```bash
-# 全局安装
+# 安装与 Release 对应的固定版本
+npm install -g nash-agents@0.1.0
+
+# 或安装当前 latest 版本
 npm install -g nash-agents
 
-# 1. 交互式初始化本节点（支持 Coordinator+Worker、Coordinator 或 Worker）
+nash --version   # Nash Agents v0.1.0
+```
+
+```bash
+# 1. 交互式初始化本节点（Coordinator+Worker、Coordinator 或 Worker）
 nash init
 
 # 2. 检查操作系统沙箱与内核隔离状态
@@ -41,23 +48,32 @@ nash doctor
 # 3. 启动节点服务
 nash start --background
 
-# 4. 查看集群与节点状态
+# 4. 查看本地与集群状态
 nash status
 nash node list
-
-# 在远端 Worker 节点上加入集群：
-nash node join
 ```
 
-也可以通过 `npx` 直接体验或进行单次任务初始化：
+远端 Worker：先在 Coordinator 生成一次性邀请（`nash node invite`），再在 Worker 执行：
 
 ```bash
-npx nash-agents init
+nash init --role worker
+nash node join
+nash start --background
+```
+
+项目授权、重连与配对说明见 [Worker 加入集群](docs/install/workers.md)。
+
+0.1.0 registry 包仅在 Linux x64 与 Windows x64 完成安装验收；macOS 与其他架构不在该验收范围内。请按文档提供的源码安装路径操作，并在目标机器上单独验证原生沙箱后再使用。
+
+也可以通过 `npx` 使用固定版本直接初始化：
+
+```bash
+npx nash-agents@0.1.0 init
 ```
 
 ## 从源码克隆与构建
 
-源码仓库已公开，可以直接使用 HTTPS 克隆，不需要私人访问令牌；已有 SSH 身份的机器仍可选择 SSH 克隆。
+源码路径适用于开发，或发布包未覆盖原生 helper 的平台。源码仓库已公开，可以直接使用 HTTPS 克隆，不需要私人访问令牌；已有 SSH 身份的机器仍可选择 SSH 克隆。
 
 ```sh
 git clone https://github.com/NashAgents/nash-agents.git
@@ -99,7 +115,7 @@ npm run build:all
 
 ## 首次初始化与启动
 
-以下命令都在克隆目录中执行，不依赖全局 `nash` 命令。
+从源码运行时，以下命令都在克隆目录中执行，不依赖全局 `nash` 命令。若通过 npm 安装，请使用上文的 `nash` 命令。
 
 ```sh
 node dist/index.js init
@@ -159,6 +175,8 @@ node dist/index.js start --background
 
 参阅 [Web 配置](docs/operations/web.md)、[故障排查](docs/operations/troubleshooting.md)、[备份与恢复](docs/operations/backup-restore.md)、[升级](docs/operations/upgrade.md)。升级前备份完整产品目录及外部 PostgreSQL，选择已审核的 Git 提交，重新构建、校验再启动。重新安装不能代替数据迁移。
 
+通过 npm 安装时，先完成备份，再安装已审核的发布版本（例如 `npm install -g nash-agents@<version>`），随后执行 `nash config validate`、`nash doctor` 与 `nash start --background`。`nash upgrade --apply` 仅支持源码 Git 工作区。
+
 ## 架构、演示与验证
 
 - [当前架构与执行边界](docs/operations/architecture.md)
@@ -169,6 +187,7 @@ node dist/index.js start --background
 - [首次使用完整流程](docs/install/first-run.md)
 - [架构说明](docs/operations/architecture.md)
 - [兼容性与验收矩阵](docs/release/verification.md)
+- [npm 包](https://www.npmjs.com/package/nash-agents)、[GitHub Release v0.1.0](https://github.com/NashAgents/nash-agents/releases/tag/v0.1.0)
 - [发布检查清单](docs/release/checklist.md)、[Release Notes 模板](docs/release/release-notes-template.md)
 - [参与贡献](CONTRIBUTING.md)、[安全报告](SECURITY.md)、[变更记录](CHANGELOG.md)
 

@@ -1,5 +1,7 @@
 # macOS 安装
 
+`0.1.0` 的 npm 包未随附 darwin helper，也未在 macOS 完成 registry 安装验收；macOS 请使用本文的源码安装路径，并在目标机器上单独验证系统 Seatbelt。
+
 需要 Git、Node.js >=24.14.0 <25，以及系统自带的 `/usr/bin/sandbox-exec`。macOS 版本和 CPU 架构应单独记录。不要假定 Linux 的 Bubblewrap 或 Windows helper 适用于 macOS。
 
 ```sh

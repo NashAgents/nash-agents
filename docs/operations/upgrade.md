@@ -2,11 +2,11 @@
 
 首次安装和保留数据升级必须分别验收。升级不会要求恢复干净快照、删除产品目录或重新创建管理员。
 
-`nash upgrade` 的自动升级仅适用于独立 Git 源码工作区，不能用于 npm 全局安装。npm 安装需要先备份产品目录和外部数据库，再通过 npm 安装已审核且实际发布的目标版本，并执行配置、沙箱和真实任务验证；当前没有经过验收的 npm 发布版本。
+`nash upgrade` 的自动升级仅适用于独立 Git 源码工作区，不能用于 npm 全局安装。npm 安装需要先备份产品目录和外部数据库，再安装已审核且实际发布的目标版本（例如 `npm install -g nash-agents@<version>`），并执行配置、沙箱和真实任务验证。`0.1.0` 已完成 Linux x64 与 Windows x64 的全新安装验收；后续版本以对应 GitHub Release 的发布说明为准。
 
 ## 升级流程
 
-1. 阅读 CHANGELOG 和目标提交的迁移说明。当前没有正式发布 Tag，不使用不存在的版本号下载产物。
+1. 阅读 CHANGELOG 和目标版本的迁移说明。只使用 GitHub Releases 中实际存在的 Tag 与 npm 上实际发布的版本号，不使用尚未发布的版本号下载产物。
 2. 记录当前 commit、产品配置版本、Worker 身份与运行状态；按[备份流程](backup-restore.md)保存完整产品目录和外部 PostgreSQL。
 3. 停止本产品的任务提交和进程，不停止其他应用。
 4. `git fetch origin`，审阅变更后切换到明确的目标 commit 或已审核分支。不得使用 `reset --hard` 丢弃未知改动；工作区有用户修改时先单独处理。
@@ -14,6 +14,18 @@
 6. `node dist/index.js upgrade` 只预检并显示当前版本。自动升级仅支持干净的 main 工作区；`node dist/index.js upgrade --apply` 才会 fetch origin/main、确认可快进、停止本产品、备份产品数据和旧产物，然后 ff-only、锁文件安装、helper/typecheck/build/单元测试。它不会自动重启，也不备份外部 PostgreSQL；外部数据库须按第 2 步单独备份。
 7. 升级命令成功后显式执行 `node dist/index.js config validate`、`node dist/index.js doctor`、`node dist/index.js start --background` 和 `node dist/index.js status`，随后在 Web 登录并执行真实任务。失败时服务保持停止，命令会输出备份路径。
 8. 各 Worker 依次升级并重连，确认 Node ID 保持、项目授权存在、模型网关正常。
+
+### npm 全局安装的升级路径
+
+npm 安装不执行 `nash upgrade --apply`。完成备份并停止服务后：
+
+```sh
+npm install -g nash-agents@<target-version>
+nash config validate
+nash doctor
+nash start --background
+nash status
+```
 
 升级验收至少核对：管理员保留、模型与密钥状态保留、节点身份保留、项目绑定保留、任务/Graph/Artifact 不丢失、数据库迁移结果、旧邀请码和已撤销身份仍按规则拒绝。
 

@@ -9,7 +9,7 @@
 - GitHub Environment `npm-release` 存在，且 npm Trusted Publishing 配置绑定同一 Environment。
 - Trusted Publishing 仅授予 **stage publish**（`npm trust github ... --allow-stage-publish`）。发布路径不读取任何长期 npm Token Secret。
 - 仓库与 npm 包均为公开访问；Provenance 需要公开仓库和 `id-token: write`。
-- `nash-agents` 在 npm 上尚不存在。npm 的 staged publishing 允许为不存在的包创建 staged 版本；Token 必须对该包名有写权限。
+- 首次发布前 `nash-agents` 在 npm 上尚不存在（现 `0.1.0` 已发布）。npm 的 staged publishing 允许为不存在的包创建 staged 版本；Token 必须对该包名有写权限。
 
 ## Tag 规则
 

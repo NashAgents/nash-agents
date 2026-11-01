@@ -17,6 +17,19 @@
 
 历史提交的成功结果不自动适用于新提交；以对应提交的 Actions 结果为准。
 
+## v0.1.0 发布验收
+
+`nash-agents@0.1.0` 于 **2026-11-01** 发布：npm `latest` 为 `0.1.0`，GitHub Release 为 [`v0.1.0`](https://github.com/NashAgents/nash-agents/releases/tag/v0.1.0)，Tag 指向源码提交 `62711107`。
+
+| 环境 | 已验证内容 |
+| --- | --- |
+| Linux x64（Ubuntu runner） | 从公共 registry 全新全局安装；`nash` 与 `nash-agents` 均报告 `Nash Agents v0.1.0`；build-info commit 与发布提交一致；linux-x64 helper SHA-256 与清单一致，报告 Landlock、seccomp 与 `noNewPrivs`；`npm audit signatures` 通过；`nash doctor` 退出码 0；无残留进程 |
+| Windows x64（windows-latest runner） | 从公共 registry 全新全局安装；两个 CLI 入口均报告 `Nash Agents v0.1.0`；build-info commit 与发布提交一致；win32-x64 helper SHA-256 与清单一致，报告 Job Object、受限 Token、AppContainer、网络/文件隔离与完整性级别；`npm audit signatures` 通过；`nash doctor` 退出码 0；无残留进程 |
+
+发布验收同时核对 registry tarball 的 SHA-256/SHA-512 integrity 与 GitHub Release 资产一致，并确认 npm provenance 绑定 `refs/tags/v0.1.0`、仓库、工作流与发布提交。
+
+**未覆盖范围**：真实模型端到端执行；macOS、Linux arm64、Windows arm64 及其他架构的 registry 安装；未随 0.1.0 分发的原生 helper。上述验证只证明对应环境的安装、发布身份与诊断结果，不扩大平台、模型或协议兼容性声明。
+
 ## 平台执行边界
 
 | 平台 | 原生沙箱 | 说明 |
