@@ -53,7 +53,7 @@ import { resolveProjectContext } from "../project/project-context.js";
 import { loadRepositoryInstructions } from "../context/repository-instructions.js";
 import { MemoryService } from "../memory/index.js";
 import { SkillService } from "../skills/index.js";
-import { RunLearningHook } from "../learning/index.js";
+import { RunLearningHook, type LearningModelCaller } from "../learning/index.js";
 import type { MCPManager } from "../mcp/mcp-manager.js";
 import {
   PreToolSecurityMonitor,
@@ -347,6 +347,17 @@ export interface AgentLoopOptions {
    * 是否跳过本地仓库指令与记忆注入（例如纯 Coordinator 模式仅需自身提示词）
    */
   standaloneSystemPrompt?: boolean;
+
+  /**
+   * 可注入的 Run 学习模型调用器（测试/嵌入式场景）。
+   * 默认使用当前 product model context 或 nash settings 中的主模型配置。
+   */
+  learningModelCaller?: LearningModelCaller;
+
+  /**
+   * Run 学习模型调用的单次超时预算（毫秒），默认 20 秒。
+   */
+  learningTimeoutMs?: number;
 }
 
 /**
@@ -710,6 +721,7 @@ async function runAgentLoopBound(userInput: string | ChatMessageContentPart[], o
           args: Record<string, unknown> | string;
           result?: string;
           success?: boolean;
+          toolCallId?: string;
         }> = [];
         let lastTestResult: { command: string; passed: boolean; redToGreen?: boolean } | undefined;
 
@@ -738,26 +750,66 @@ async function runAgentLoopBound(userInput: string | ChatMessageContentPart[], o
             }
 
             // 触发 Run 结束自动学习与知识沉淀 (Fail-Safe 保证，失败绝不阻断用户任务)
-            try {
-              const learningHook = new RunLearningHook({
-                memoryService,
-                skillService,
-                projectContext,
-              });
-              await learningHook.processRun({
-                sessionId,
-                runId: traceId,
-                userInput: userInputText,
-                response: finalAnswer,
-                toolCalls: executedToolCalls,
-                testResults: lastTestResult,
-                isError: false,
-                metadata: {
-                  projectId: projectContext.projectId,
-                  agentId,
-                },
-              });
-            } catch {}
+            // NASH_DISABLE_AUTO_LEARNING=1 是测试/运维紧急关闭开关；显式注入 caller 时仍然执行，
+            // 便于集成测试验证学习链路而不依赖真实外部模型。
+            const shouldRunLearning =
+              process.env.NASH_DISABLE_AUTO_LEARNING !== "1" ||
+              Boolean(options?.learningModelCaller);
+            if (shouldRunLearning) {
+              try {
+                const recentMessages = messages
+                  .filter(
+                    (message) =>
+                      (message.role === "user" || message.role === "assistant") &&
+                      typeof message.content === "string" &&
+                      message.content.trim().length > 0
+                  )
+                  .slice(-8)
+                  .map((message) => ({
+                    role: message.role as "user" | "assistant",
+                    content: message.content as string,
+                  }));
+
+                const verifiedFiles = executedToolCalls
+                  .filter(
+                    (call) =>
+                      call.success === true &&
+                      /^(?:edit_file|write_file)$/i.test(call.name)
+                  )
+                  .map((call) => {
+                    if (typeof call.args !== "object" || call.args === null) return undefined;
+                    const pathValue = (call.args as Record<string, unknown>).path;
+                    return typeof pathValue === "string" ? pathValue : undefined;
+                  })
+                  .filter((value): value is string => Boolean(value));
+
+                const learningHook = new RunLearningHook({
+                  memoryService,
+                  skillService,
+                  projectContext,
+                  eventBus,
+                  modelCaller: options?.learningModelCaller,
+                  timeoutMs: options?.learningTimeoutMs,
+                });
+                // Hook 内部通过 EventBus 上报 learning.completed/failed/skipped，
+                // 这里不再额外重复发送事件，也绝不改变主 Run 结果。
+                await learningHook.processRun({
+                  sessionId,
+                  runId: traceId,
+                  userInput: userInputText,
+                  response: finalAnswer,
+                  recentMessages,
+                  toolCalls: executedToolCalls,
+                  verifiedFiles,
+                  testResults: lastTestResult,
+                  isError: false,
+                  metadata: {
+                    projectId: projectContext.projectId,
+                    agentId,
+                  },
+                });
+              } catch {}
+            }
 
             const loopEndTime = Date.now();
             const totalDuration = performance.now() - loopMonotonicStart;
@@ -1222,6 +1274,7 @@ async function runAgentLoopBound(userInput: string | ChatMessageContentPart[], o
                   args: rawArgs,
                   result: blockResult.output,
                   success: false,
+                  toolCallId: toolCall.id,
                 });
 
                 messages.push({
@@ -1256,7 +1309,7 @@ async function runAgentLoopBound(userInput: string | ChatMessageContentPart[], o
                   };
                   const processed = await contextManager.processToolResult(toolName, toolCall.id, unapprovableResult);
                   executedToolCallIds.add(toolCall.id);
-                  executedToolCalls.push({ name: toolName, args: rawArgs, result: unapprovableResult.output, success: false });
+                  executedToolCalls.push({ name: toolName, args: rawArgs, result: unapprovableResult.output, success: false, toolCallId: toolCall.id });
                   messages.push({ role: "tool", tool_call_id: toolCall.id, content: processed.content });
                   continue;
                 }
@@ -1280,7 +1333,7 @@ async function runAgentLoopBound(userInput: string | ChatMessageContentPart[], o
                     };
                     const processed = await contextManager.processToolResult(toolName, toolCall.id, reviewDownResult);
                     executedToolCallIds.add(toolCall.id);
-                    executedToolCalls.push({ name: toolName, args: rawArgs, result: reviewDownResult.output, success: false });
+                    executedToolCalls.push({ name: toolName, args: rawArgs, result: reviewDownResult.output, success: false, toolCallId: toolCall.id });
                     messages.push({ role: "tool", tool_call_id: toolCall.id, content: processed.content });
                     continue;
                   }
@@ -1351,6 +1404,7 @@ async function runAgentLoopBound(userInput: string | ChatMessageContentPart[], o
                     args: rawArgs,
                     result: deniedResult.output,
                     success: false,
+                    toolCallId: toolCall.id,
                   });
 
                   messages.push({
@@ -1443,6 +1497,7 @@ async function runAgentLoopBound(userInput: string | ChatMessageContentPart[], o
                 args: rawArgs,
                 result: executionResponse.result.output,
                 success: executionResponse.result.success,
+                toolCallId: executionResponse.tool_call_id,
               });
 
               // 检查工具是否被用户中断，若被中断则对本轮后续尚未执行的工具调用进行取消合成补偿，并立即跳出工具循环，推进至 Steer 注入

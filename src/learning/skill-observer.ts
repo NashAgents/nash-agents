@@ -11,7 +11,10 @@ export interface SkillObserverOptions {
 }
 
 /**
- * Skill 工作流观察与候选生成器 (Skill 自动生成必须保守)
+ * Skill 工作流观察与候选生成器（工具调用序列重复计数）。
+ *
+ * @deprecated Run 结束自动沉淀已改为模型驱动（见 LearningAnalyzer）。
+ * 该类保留用于兼容既有导入与观察边界测试；自动生成不再以工具调用名称序列重复作为主要依据。
  */
 export class SkillObserver {
   private readonly observationsPath: string;

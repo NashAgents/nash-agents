@@ -4,7 +4,7 @@ import { ConservativeTokenEstimator } from "../context/token-meter.js";
 import type { TraceContextPayload } from "./trace-context.js";
 import { defaultTraceContext } from "./trace-context.js";
 
-export type RequestPurpose = "agent" | "planner" | "replanner" | "goal_review" | "security" | "compaction" | "title" | "prompt_optimizer" | "unspecified";
+export type RequestPurpose = "agent" | "planner" | "replanner" | "goal_review" | "security" | "learning" | "compaction" | "title" | "prompt_optimizer" | "unspecified";
 export interface ModelUsageRecord {
   accountingId: string;
   traceId?: string; spanId: string; parentSpanId?: string;

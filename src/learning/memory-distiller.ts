@@ -5,7 +5,10 @@ const SPECULATIVE_PATTERN = /(?:可能|似乎|也许|大概|不确定|猜测|貌
 const TEMP_PATTERN = /(?:pid:\s*\d+|port:\s*\d+|localhost:\d+|http:\/\/\S+|127\.0\.0\.1|进度\s*\d+%)/i;
 
 /**
- * 结构化知识提炼器
+ * 结构化知识提炼器（固定字符串规则）。
+ *
+ * @deprecated Run 结束自动沉淀已改为模型驱动（见 LearningAnalyzer）。
+ * 该类保留用于兼容既有导入与规则边界测试，不再作为 RunLearningHook 的写入依据。
  */
 export class MemoryDistiller {
   /**
