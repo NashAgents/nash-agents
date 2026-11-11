@@ -27,6 +27,7 @@ export interface MailboxOptions {
  */
 export class Mailbox {
   private readonly inboxes = new Map<string, InternalTeamMessage[]>();
+  private readonly notificationIds = new Set<string>();
   private readonly eventBus?: EventBus;
   private readonly projectId: string;
   private readonly sessionId: string;
@@ -41,6 +42,8 @@ export class Mailbox {
     if (!this.inboxes.has(agentId)) this.inboxes.set(agentId, []);
   }
 
+  hasNotification(notificationId: string): boolean { return this.notificationIds.has(notificationId); }
+
   unregisterRecipient(agentId: string): void { this.inboxes.delete(agentId); }
 
   /**
@@ -52,18 +55,27 @@ export class Mailbox {
     senderName?: string;
     targetAgentId: string;
     content: string;
+    targetSessionId?: string;
+    notificationId?: string;
   }): TeamMessage {
+    if (input.notificationId && this.notificationIds.has(input.notificationId)) {
+      return { type: "team_message", teamId: input.teamId, messageId: input.notificationId,
+        senderAgentId: input.senderAgentId, targetAgentId: input.targetAgentId,
+        targetSessionId: input.targetSessionId, content: input.content, createdAt: Date.now() };
+    }
     const message: InternalTeamMessage = {
       type: "team_message",
       teamId: input.teamId,
-      messageId: `msg-${crypto.randomUUID().slice(0, 8)}`,
+      messageId: input.notificationId ?? `msg-${crypto.randomUUID()}`,
       senderAgentId: input.senderAgentId,
       senderName: input.senderName,
       targetAgentId: input.targetAgentId,
+      targetSessionId: input.targetSessionId,
       content: input.content,
       status: "pending",
       createdAt: Date.now(),
     };
+    if (input.notificationId) this.notificationIds.add(input.notificationId);
 
     if (input.targetAgentId === "*") {
       for (const [agentId, queue] of this.inboxes.entries()) {
@@ -90,7 +102,7 @@ export class Mailbox {
   /**
    * 在 Step Boundary 获取所有 pending 消息，并将其原子标记为 delivered
    */
-  claimPendingMessages(agentId: string): TeamMessage[] {
+  claimPendingMessages(agentId: string, sessionId?: string): TeamMessage[] {
     const queue = this.inboxes.get(agentId);
     if (!queue || queue.length === 0) {
       return [];
@@ -100,7 +112,7 @@ export class Mailbox {
     const now = Date.now();
 
     for (const msg of queue) {
-      if (msg.status === "pending") {
+      if (msg.status === "pending" && (!msg.targetSessionId || msg.targetSessionId === sessionId)) {
         msg.status = "delivered";
         msg.deliveredAt = now;
         pendingMessages.push(msg);
@@ -160,10 +172,14 @@ export class Mailbox {
   /**
    * 查看未消费 (pending) 的消息数
    */
-  getUnreadCount(agentId: string): number {
+  getUnreadCount(agentId: string, sessionId?: string): number {
     const queue = this.inboxes.get(agentId);
     if (!queue) return 0;
-    return queue.filter((m) => m.status === "pending").length;
+    return queue.filter((m) => m.status === "pending" && (!m.targetSessionId || m.targetSessionId === sessionId)).length;
+  }
+
+  pendingNotificationIds(agentId: string, sessionId: string): string[] {
+    return (this.inboxes.get(agentId) ?? []).filter(m => m.status === "pending" && m.targetSessionId === sessionId).map(m => m.messageId);
   }
 
   /**
@@ -182,7 +198,8 @@ export class Mailbox {
       const senderDisplay = msg.senderName
         ? `${msg.senderName} (${msg.senderAgentId})`
         : msg.senderAgentId;
-      return `[Message from teammate: ${senderDisplay}]\n${msg.content}`;
+      const id = msg.targetSessionId ? `\nNotification ID: ${msg.messageId}` : "";
+      return `[Message from teammate: ${senderDisplay}]${id}\n${msg.content}`;
     });
   }
 

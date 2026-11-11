@@ -369,7 +369,7 @@ export class InputManager {
   /**
    * 启动运行期间导航模式 (启用全屏 SGR 鼠标报告)
    */
-  startNavigationMode(handler: NavigationHandler, mode: InteractionMode = "navigation"): void {
+  startNavigationMode(handler: NavigationHandler, mode: InteractionMode = "navigation", options?: { preserveComposer?: boolean }): void {
     if (this.isClosed) return;
     this.isRestored = false;
     if (this.isTTY && typeof this.input.setRawMode === "function") {
@@ -380,11 +380,13 @@ export class InputManager {
     this.interactionMode = mode;
     this.navigationHandler = handler;
     this.graphemes = [];
-    this.composerGraphemes = [];
-    this.composerCursorPos = 0;
-    this.followupMode = "steer";
+    if (!options?.preserveComposer) {
+      this.composerGraphemes = [];
+      this.composerCursorPos = 0;
+      this.followupMode = "steer";
+    }
     this.cursorPos = 0;
-    this.rawInputBuffer = "";
+    if (!options?.preserveComposer) this.rawInputBuffer = "";
 
     if (this.autoMouseReporting) {
       this.enableMouseReporting();

@@ -1,6 +1,6 @@
 {
   "name": "nash-agents",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Nash Agents: distributed autonomous agent execution with native sandboxes and verifiable task orchestration.",
   "main": "dist/index.js",
   "directories": {

@@ -267,7 +267,7 @@ export function createSubAgentTools(options: {
       }
       const spawnOptions = {
         name: args.name, role: args.role, taskId: args.taskId,
-        parentAgentId: options.agentId ?? args.parentAgentId, writeScopes: args.writeScopes, parentSignal: context?.signal,
+        parentAgentId: options.agentId ?? args.parentAgentId, parentSessionId: context?.sessionId, writeScopes: args.writeScopes, parentSignal: context?.signal,
       };
       if (args.background === true) {
         const agentId = runtime.spawnInBackground(args.prompt, spawnOptions);
@@ -312,9 +312,9 @@ export function createSubAgentTools(options: {
 
   return [spawnAgentTool, interruptAgentTool, listAgentsTool, defineTool({
     name: "wait_agent", description: "等待后台子代理结果，等待时让出并发槽位，超时返回 running。",
-    parameters: { type: "object", properties: { agentId: { type: "string" }, timeoutMs: { type: "number" } }, required: ["agentId"] },
+    parameters: { type: "object", properties: { agentId: { type: "string" }, executionId: { type: "string", description: "完成通知中的 Notification ID；省略时读取该 Agent 最近一次执行" }, timeoutMs: { type: "number" } }, required: ["agentId"] },
     async execute(args: any, context) {
-      const result = await runtime.waitForAgent(args.agentId, args.timeoutMs, context?.signal, options.agentId);
+      const result = await runtime.waitForAgent(args.agentId, args.timeoutMs, context?.signal, options.agentId, args.executionId);
       return result ? JSON.stringify({ ...result, error: result.error?.message }) : JSON.stringify({ agentId: args.agentId, status: "running" });
     },
   })];
@@ -404,7 +404,7 @@ export function createTeamTools(options: {
           },
           required: ["taskId", "agentId"],
         },
-        async execute(args: any): Promise<string> {
+        async execute(args: any, context): Promise<string> {
           if (pm && (pm.getState() === "exploring" || pm.getState() === "proposed" || pm.getState() === "awaiting_approval")) {
             return `当前处于 Plan Mode (${pm.getState()}) 状态，在方案获得用户批准前禁止指派任务。`;
           }
@@ -430,6 +430,8 @@ export function createTeamTools(options: {
               role: member.role,
               roleDescription: member.roleDescription,
               taskId: task.id,
+              parentAgentId: options.agentId ?? team.leaderId,
+              parentSessionId: context?.sessionId,
               writeScopes: taskObj?.writeScopes,
             };
             if (args.background === true) {
@@ -514,9 +516,11 @@ export function createTeamTools(options: {
           timeoutMs: { type: "number", description: "最大等待超时毫秒数，默认 30000" },
         },
       },
-      async execute(args: any): Promise<string> {
+      async execute(args: any, context): Promise<string> {
         const res = await team.waitForChange(actorId(), {
           timeoutMs: args.timeoutMs,
+          signal: context?.signal,
+          sessionId: context?.sessionId,
         });
         return `Agent '${actorId()}' 已被唤醒 (唤醒原因: ${res.reason})`;
       },

@@ -28,6 +28,7 @@ export interface SpawnSubAgentOptions {
   agentId?: string;
   name?: string;
   parentAgentId?: string;
+  parentSessionId?: string;
   role?: string;
   roleDescription?: string;
   taskId?: string;
@@ -94,6 +95,11 @@ export class SubAgentRuntime {
   private readonly userMessageRouter?: UserMessageRouter;
   private readonly heldSlots = new Set<string>();
   private readonly backgroundRuns = new Map<string, Promise<SubAgentResult>>();
+  private readonly backgroundExecutions = new Map<string, { agentId: string; execution: Promise<SubAgentResult> }>();
+  private readonly activeBackgroundRuns = new Set<string>();
+  isExecuting(agentId: string): boolean { return this.activeBackgroundRuns.has(agentId) || this.abortControllers.has(agentId); }
+  private readonly backgroundParentSessions = new Map<string, string>();
+  getBackgroundParentSessionId(agentId: string): string | undefined { return this.backgroundParentSessions.get(agentId); }
   private teamRuntime?: TeamRuntime;
   setTeamRuntime(team: TeamRuntime): void { this.teamRuntime = team; }
 
@@ -116,14 +122,28 @@ export class SubAgentRuntime {
 
   spawnInBackground(prompt: string, options?: SpawnSubAgentOptions): string {
     const agentId = options?.agentId ?? `agent-${crypto.randomUUID().slice(0, 8)}`;
-    if (this.backgroundRuns.has(agentId) || this.abortControllers.has(agentId)) throw new Error(`Agent '${agentId}' is already executing`);
-    const execution = this.spawn(prompt, { ...options, agentId, yieldParentSlot: false }).catch((error: Error) => ({ agentId, success: false, output: "", error, durationMs: 0 }));
+    if (this.activeBackgroundRuns.has(agentId) || this.abortControllers.has(agentId)) throw new Error(`Agent '${agentId}' is already executing`);
+    this.activeBackgroundRuns.add(agentId);
+    if (options?.parentSessionId) this.backgroundParentSessions.set(agentId, options.parentSessionId);
+    else this.backgroundParentSessions.delete(agentId);
+    const executionId = `execution-${crypto.randomUUID()}`;
+    const execution = this.spawn(prompt, { ...options, agentId, yieldParentSlot: false })
+      .catch((error: Error): SubAgentResult => ({ agentId, taskId: options?.taskId, success: false, output: "", error, durationMs: 0 }))
+      .then(result => {
+        if (options?.parentAgentId && options.parentSessionId) {
+          const interrupted = result.error instanceof AgentInterruptedError || this.agentRegistry.getAgent(agentId)?.status === "interrupted";
+          this.teamRuntime?.notifyBackgroundCompletion({ executionId, agentId, parentAgentId: options.parentAgentId, parentSessionId: options.parentSessionId, taskId: options.taskId, status: result.success ? "completed" : interrupted ? "interrupted" : "failed", summary: result.success ? result.output : result.error?.message ?? "执行失败" });
+        }
+        return result;
+      }).finally(() => this.activeBackgroundRuns.delete(agentId));
     this.backgroundRuns.set(agentId, execution);
+    this.backgroundExecutions.set(executionId, { agentId, execution });
     return agentId;
   }
 
-  async waitForAgent(agentId: string, timeoutMs = 60000, signal?: AbortSignal, callerAgentId?: string): Promise<SubAgentResult | undefined> {
-    const execution = this.backgroundRuns.get(agentId);
+  async waitForAgent(agentId: string, timeoutMs = 60000, signal?: AbortSignal, callerAgentId?: string, executionId?: string): Promise<SubAgentResult | undefined> {
+    const selected = executionId ? this.backgroundExecutions.get(executionId) : undefined;
+    const execution = executionId ? (selected?.agentId === agentId ? selected.execution : undefined) : this.backgroundRuns.get(agentId);
     if (!execution) throw new AgentNotFoundError(agentId);
     let timer: NodeJS.Timeout | undefined;
     let onAbort: (() => void) | undefined;
@@ -358,7 +378,7 @@ export class SubAgentRuntime {
     } catch (err: unknown) {
       const durationMs = Date.now() - startTime;
       const error = err instanceof Error ? err : new Error(String(err));
-      const isInterrupted = error instanceof AgentInterruptedError;
+      const isInterrupted = error instanceof AgentInterruptedError || abortController.signal.aborted;
 
       const terminalStatus = isInterrupted ? "interrupted" : "failed";
       this.agentRegistry.updateStatus(agentId, terminalStatus, {

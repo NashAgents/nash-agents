@@ -25,6 +25,7 @@ import { CliApprovalProvider } from "./approval/cli-approval.js";
 import { FileSystemAccess } from "./sandbox/filesystem-access.js";
 import { SandboxService } from "./sandbox/sandbox-service.js";
 import { createDefaultToolRegistry, ToolExecutor } from "./tools/index.js";
+import { LeadWake } from "./team/lead-wake.js";
 import { ContextManager } from "./context/index.js";
 import { LocalSessionStore } from "./context/session/local-session-store.js";
 import { resolveProjectContext } from "./project/index.js";
@@ -410,6 +411,9 @@ async function main() {
     agentRegistry,
     nativeScrollback: true,
     taskManager,
+    isAgentExecuting: agentId => subAgentRuntime.isExecuting(agentId),
+    currentSessionId: () => contextManager.sessionId,
+    agentParentSessionId: agentId => subAgentRuntime.getBackgroundParentSessionId(agentId),
     jobManager,
     approvalService,
     decisionController,
@@ -478,8 +482,17 @@ async function main() {
   const isTTY = Boolean(process.stdout.isTTY);
 
   // 14. 构造统一 Navigation 与输入分发处理器
-  let turnResolver: ((value: { text: string; target: string }) => void) | null = null;
+  type InputTurn = { text: string; target: string; automatic?: boolean };
+  let turnResolver: ((value: InputTurn) => void) | null = null;
   let turnRejecter: ((err: Error) => void) | null = null;
+  const automaticPrompt = "后台成员已结束执行。请处理邮箱通知，使用 wait_agent 获取所需完整结果，并验证产物；其他成员仍在运行时可使用 wait_for_change 继续等待。";
+  const leadWake = new LeadWake(teamRuntime, "main", () => contextManager.sessionId, () => {
+    if (!isTTY || !turnResolver || !leadWake.take()) return;
+    const resolve = turnResolver;
+    turnResolver = null;
+    turnRejecter = null;
+    resolve({ text: automaticPrompt, target: "main", automatic: true });
+  });
 
   const baseNavHandler = cliPresenter.getNavigationHandler();
   const combinedNavHandler = {
@@ -552,7 +565,7 @@ async function main() {
           onSessionSwitched: async (newSessionId: string) => {
             const session = contextManager.getSession();
             const records = await session.getRecords();
-            cliPresenter.loadResumedSession(records);
+            cliPresenter.loadResumedSession(records, { preserveRuntime: true });
           },
         };
 
@@ -649,12 +662,13 @@ async function main() {
     );
   }
 
-  async function getNextUserInput(): Promise<{ text: string; target: string }> {
+  async function getNextUserInput(): Promise<InputTurn> {
     if (!isTTY) {
       const msg = await inputManager.readUserMessage("\x1b[36mNash > \x1b[0m");
       return { text: msg, target: "main" };
     }
-    return new Promise<{ text: string; target: string }>((resolve, reject) => {
+    if (leadWake.take()) return { text: automaticPrompt, target: "main", automatic: true };
+    return new Promise<InputTurn>((resolve, reject) => {
       turnResolver = resolve;
       turnRejecter = reject;
     });
@@ -664,7 +678,7 @@ async function main() {
     cliPresenter.enterAppScreen();
 
     while (true) {
-      let userInputItem: { text: string; target: string };
+      let userInputItem: InputTurn;
       try {
         userInputItem = await getNextUserInput();
       } catch (err: unknown) {
@@ -705,7 +719,7 @@ async function main() {
           onSessionSwitched: async (newSessionId) => {
             const session = contextManager.getSession();
             const records = await session.getRecords();
-            cliPresenter.loadResumedSession(records);
+            cliPresenter.loadResumedSession(records, { preserveRuntime: true });
           },
         });
 
@@ -748,10 +762,13 @@ async function main() {
       }
 
       let activePrompt: string | undefined = trimmed;
+      let automaticTurn = userInputItem.automatic === true;
 
       while (activePrompt) {
         const currentTurnPrompt = activePrompt;
         activePrompt = undefined;
+        const preserveComposer = automaticTurn;
+        automaticTurn = false;
 
         // 若用户在非 Main 的子代理详情页中提交新指令，由 subAgentRuntime 驱动该子代理执行，视口始终保持在子代理！
         if (runTarget !== "main") {
@@ -788,10 +805,10 @@ async function main() {
         const runStart = Date.now();
 
         // 1. 开启原子 Run Transition Guard (抑制中间帧输出，注册 Main Agent 并初始化数据投影)
-        cliPresenter.beginRunTransition(currentTurnPrompt);
+        cliPresenter.beginRunTransition(currentTurnPrompt, undefined, "main", { preserveComposer });
 
         // 2. 挂载 NavigationHandler 并激活 running-main 模式
-        inputManager.startNavigationMode(combinedNavHandler, "running-main");
+        inputManager.startNavigationMode(combinedNavHandler, "running-main", { preserveComposer });
 
         // 3. 提交 Transition，一次性渲染完整稳定的 RunningMainView 首帧
         cliPresenter.commitRunTransition();
@@ -870,6 +887,8 @@ async function main() {
       }
     }
   } finally {
+    leadWake.close();
+    teamRuntime.destroy();
     if (turnRejecter) {
       turnRejecter(new Error("InputManager closed"));
       turnResolver = null;

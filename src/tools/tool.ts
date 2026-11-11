@@ -5,6 +5,7 @@ import type { ChatCompletionTool } from "../model/chat-completions-client.js";
  */
 export interface ToolExecutionContext {
   signal?: AbortSignal;
+  sessionId?: string;
 }
 
 export interface Tool<TArgs = any, TResult = unknown> {

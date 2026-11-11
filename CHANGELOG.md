@@ -2,6 +2,14 @@
 
 Version 0.x is an evolving API. This file records changes included in published versions; it does not itself create a Release, tag, or npm package.
 
+## 0.1.1 — Unreleased
+
+### Local teammate notifications
+
+- Deliver background teammate completion, failure and interruption notices to the Lead session that dispatched the run. Active Leads receive notices at safe loop boundaries; the interactive CLI wakes an idle Lead and preserves unfinished input.
+- Keep notices isolated across session switches, preserve live team state, and allow `wait_agent` to retrieve full results, including an earlier execution by notification ID. Task artifacts still require verification.
+- The local mailbox and background results remain in memory and are lost on process restart; automatic wake-up currently applies to the interactive CLI Main session. See [local teammate notifications](docs/local-teammate-notifications.md).
+
 ## 0.1.0 — 2026-11-01
 
 Released to npm and GitHub Releases: [nash-agents@0.1.0](https://www.npmjs.com/package/nash-agents/v/0.1.0) · [GitHub Release](https://github.com/NashAgents/nash-agents/releases/tag/v0.1.0). Tag `v0.1.0` points to source commit `62711107`.

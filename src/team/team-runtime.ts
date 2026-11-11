@@ -45,6 +45,7 @@ export class TeamRuntime {
   private readonly eventBus?: EventBus;
   private readonly internalEmitter = new EventEmitter();
   private readonly cleanupBusSub?: () => void;
+  private destroyed = false;
 
   constructor(options: TeamRuntimeOptions) {
     this.teamId = options.teamId ?? `team-${crypto.randomUUID().slice(0, 8)}`;
@@ -196,8 +197,27 @@ export class TeamRuntime {
   /**
    * 在 Step Boundary 获取并清空待处理的团队消息
    */
-  claimMessagesForStep(agentId: string) {
-    return this.mailbox.claimPendingMessages(agentId);
+  claimMessagesForStep(agentId: string, sessionId?: string) {
+    return this.mailbox.claimPendingMessages(agentId, sessionId);
+  }
+
+  notifyBackgroundCompletion(input: { executionId: string; agentId: string; parentAgentId: string; parentSessionId: string; taskId?: string; status: "completed" | "failed" | "interrupted"; summary: string }): void {
+    if (this.destroyed || this.mailbox.hasNotification(input.executionId)) return;
+    const message = this.mailbox.sendMessage({
+      teamId: this.teamId, senderAgentId: input.agentId, targetAgentId: input.parentAgentId,
+      targetSessionId: input.parentSessionId, notificationId: input.executionId,
+      content: `[后台 Agent 执行结束]\nAgent ID: ${input.agentId}\nTask ID: ${input.taskId ?? "无"}\n状态: ${input.status}\n摘要: ${input.summary.slice(0, 500) || "（无）"}\n使用 wait_agent 获取完整结果；产物仍需验证。`,
+    });
+    this.internalEmitter.emit("change", { reason: "mail_received", agentId: input.parentAgentId, details: { messageId: message.messageId, sessionId: input.parentSessionId } });
+    this.internalEmitter.emit("completion", input.parentAgentId, input.parentSessionId);
+  }
+
+  onCompletion(listener: (agentId: string, sessionId: string) => void): () => void {
+    const safeListener = (agentId: string, sessionId: string) => {
+      try { listener(agentId, sessionId); } catch { /* A wake subscriber cannot change the execution result. */ }
+    };
+    this.internalEmitter.on("completion", safeListener);
+    return () => this.internalEmitter.off("completion", safeListener);
   }
 
   /**
@@ -211,10 +231,11 @@ export class TeamRuntime {
     options?: {
       timeoutMs?: number;
       signal?: AbortSignal;
+      sessionId?: string;
     }
   ): Promise<TeamChangeNotification> {
     // 检查是否有立即可读的未读消息或 Ready 任务
-    const unreadCount = this.mailbox.getUnreadCount(agentId);
+    const unreadCount = this.mailbox.getUnreadCount(agentId, options?.sessionId);
     if (unreadCount > 0) {
       return {
         reason: "mail_received",
@@ -254,6 +275,7 @@ export class TeamRuntime {
         };
 
         const onChange = (notif: { reason: any; agentId: string; details?: any }) => {
+          if (notif.details?.sessionId && notif.details.sessionId !== options?.sessionId) return;
           if (notif.agentId === agentId || notif.agentId === "*" || notif.reason === "task_ready") {
             cleanup();
             this.agentRegistry.updateStatus(agentId, "running");
@@ -293,6 +315,12 @@ export class TeamRuntime {
         this.internalEmitter.on("change", onChange);
         this.internalEmitter.on("event", onBusEvent);
 
+        // Close the gap between the initial unread check and listener registration.
+        if (this.mailbox.getUnreadCount(agentId, options?.sessionId) > 0) {
+          onChange({ reason: "mail_received", agentId });
+          return;
+        }
+
         if (options?.signal) {
           if (options.signal.aborted) {
             onAbort();
@@ -317,6 +345,7 @@ export class TeamRuntime {
   }
 
   destroy(): void {
+    this.destroyed = true;
     if (this.cleanupBusSub) {
       this.cleanupBusSub();
     }

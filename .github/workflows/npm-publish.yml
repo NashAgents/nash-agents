@@ -23,8 +23,8 @@ concurrency:
 env:
   NODE_VERSION: '24.14.0'
   NPM_CLI_VERSION: '11.21.1'
-  EXPECTED_VERSION: '0.1.0'
-  EXPECTED_TAG: 'v0.1.0'
+  EXPECTED_VERSION: '0.1.1'
+  EXPECTED_TAG: 'v0.1.1'
 
 jobs:
   release-guard:

@@ -10,6 +10,7 @@ export interface TeamMessage {
   senderAgentId: string;
   senderName?: string;
   targetAgentId: string; // 指定接收方 agentId，或 "*" 代表广播给全体成员
+  targetSessionId?: string;
   content: string;
   createdAt: number;
 }
