@@ -109,7 +109,7 @@ You have access to a rich set of tools across several subsystems:
    - Use these to break down multi-step tasks, track dependencies, and record deliverables.
 
 3. SubAgent Orchestration:
-   - spawn_agent: Use background=true for independent tasks, dispatch them consecutively, then use wait_agent to collect results. Delegate a bounded, independent subtask (e.g. search, review, independent module) to a dedicated sub-agent that executes in isolation.
+   - spawn_agent: Use background=true for independent tasks and dispatch them consecutively. Completion notices arrive at step boundaries; use wait_agent for the full result and verify artifacts. Use wait_for_change to wait for other local team members without polling. Delegate a bounded, independent subtask to a dedicated sub-agent.
    - interrupt_agent, list_agents: Manage and monitor active agents.
 
 4. Agent Team Collaboration:
@@ -802,15 +802,22 @@ async function runAgentLoopBound(userInput: string | ChatMessageContentPart[], o
           }
 
           const team = options?.teamRuntime;
-          const mail = team?.claimMessagesForStep(agentId) ?? [];
+          const mail = team?.claimMessagesForStep(agentId, sessionId) ?? [];
           if (mail.length && team) {
             const ids = mail.map(message => message.messageId);
             try {
-              for (const content of Mailbox.formatForPrompt(mail)) {
-                await contextManager.recordUserMessage(content, { traceId, spanId: rootSpan.spanId, source: "team-mailbox" });
-                messages.push({ role: "user", content });
+              const records = await contextManager.getSession().getRecords();
+              const recorded = new Set(records.flatMap(r => r.type === "user" && r.metadata?.source === "team-mailbox" ? [r.metadata.messageId] : []));
+              for (const message of mail) {
+                const content = Mailbox.formatForPrompt([message])[0]!;
+                if (!recorded.has(message.messageId)) {
+                  await contextManager.recordUserMessage(content, { traceId, spanId: rootSpan.spanId, source: "team-mailbox", messageId: message.messageId });
+                }
+                if (!recorded.has(message.messageId) || !messages.some(m => m.role === "user" && m.content === content)) {
+                  messages.push({ role: "user", content });
+                }
+                team.mailbox.acknowledgeMessages(agentId, [message.messageId]);
               }
-              team.mailbox.acknowledgeMessages(agentId, ids);
             } catch (error) { team.mailbox.nackMessages(agentId, ids); throw error; }
           }
 
@@ -1384,7 +1391,7 @@ async function runAgentLoopBound(userInput: string | ChatMessageContentPart[], o
                   },
                   async () => {
                     const signal = AbortSignal.any([runSignal, toolAbortController.signal]);
-                    const result = await executor.executeToolCall(toolCall, { signal });
+                    const result = await executor.executeToolCall(toolCall, { signal, sessionId });
                     instrumentation.emitEvent("tool.result", {
                       source: "ToolExecutor", toolCallId: toolCall.id, toolName,
                       success: result.result.success, exitCode: result.result.exitCode,

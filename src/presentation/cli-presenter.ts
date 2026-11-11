@@ -60,6 +60,9 @@ export interface CliPresenterOptions {
   eventBus: EventBus;
   agentRegistry: AgentRegistry;
   taskManager?: TaskManager;
+  isAgentExecuting?: (agentId: string) => boolean;
+  currentSessionId?: () => string;
+  agentParentSessionId?: (agentId: string) => string | undefined;
   jobManager?: JobManager;
   approvalService?: ApprovalService;
   decisionController?: DecisionController;
@@ -96,6 +99,9 @@ export class CliPresenter {
   private readonly eventBus: EventBus;
   private readonly agentRegistry: AgentRegistry;
   private readonly taskManager?: TaskManager;
+  private readonly isAgentExecuting?: (agentId: string) => boolean;
+  private readonly currentSessionId?: () => string;
+  private readonly agentParentSessionId?: (agentId: string) => string | undefined;
   private readonly jobManager?: JobManager;
   private approvalService?: ApprovalService;
   private planMode?: PlanMode;
@@ -199,6 +205,9 @@ export class CliPresenter {
     this.eventBus = options.eventBus;
     this.agentRegistry = options.agentRegistry;
     this.taskManager = options.taskManager;
+    this.isAgentExecuting = options.isAgentExecuting;
+    this.currentSessionId = options.currentSessionId;
+    this.agentParentSessionId = options.agentParentSessionId;
     this.jobManager = options.jobManager;
     this.approvalService = options.approvalService;
     this.planMode = options.planMode;
@@ -409,8 +418,8 @@ export class CliPresenter {
     }
   }
 
-  loadResumedSession(records: SessionRecord[]): void {
-    this.resetSession();
+  loadResumedSession(records: SessionRecord[], options?: { preserveRuntime?: boolean }): void {
+    this.resetSession(options);
     if (records.length) this.loadSessionRecords("main", records);
     this.returnToMainView();
   }
@@ -517,7 +526,8 @@ export class CliPresenter {
   beginRunTransition(
     userInput: string,
     runId?: string,
-    targetAgentId = "main"
+    targetAgentId = "main",
+    options?: { preserveComposer?: boolean }
   ): boolean {
     const targetRunId = runId ?? crypto.randomUUID();
     if (this.currentRunId && this.currentRunId === targetRunId && (this.isRunning || this.isRunTransitioning)) {
@@ -549,8 +559,10 @@ export class CliPresenter {
     this.activePlanForRevision = undefined;
     this.steerFeedback = undefined;
     this.planFeedback = undefined;
-    this.composerDraft = "";
-    this.followupMode = "steer";
+    if (!options?.preserveComposer) {
+      this.composerDraft = "";
+      this.followupMode = "steer";
+    }
     this.currentRunOutTokens = 0;
     this.streamedOutputTokens = 0;
 
@@ -764,6 +776,7 @@ export class CliPresenter {
     const allCompleted = allTasks.length > 0 && allTasks.every((t) => t.status === "completed");
     for (const agent of this.agentRegistry.getAllAgents()) {
       if (agent.agentId !== "main") {
+        if (this.isAgentExecuting?.(agent.agentId)) continue;
         if (allCompleted) {
           if (agent.status === "running" || agent.status === "waiting") {
             this.agentRegistry.updateStatus(agent.agentId, "completed");
@@ -835,11 +848,11 @@ export class CliPresenter {
   /**
    * 重置整个 Session（用于 /new 开启全新空会话）
    */
-  resetSession(): void {
+  resetSession(options?: { preserveRuntime?: boolean }): void {
     this.clearTranscriptSelection();
     this.nativeCommittedLines = [];
     this.nativeViewAgentId = "main";
-    this.taskManager?.clear();
+    if (!options?.preserveRuntime) this.taskManager?.clear();
     for (const proj of this.transcriptProjections.values()) {
       proj.clear();
     }
@@ -859,7 +872,7 @@ export class CliPresenter {
 
     const all = this.agentRegistry.getAllAgents();
     for (const a of all) {
-      if (a.agentId !== "main") {
+      if (a.agentId !== "main" && !options?.preserveRuntime) {
         this.agentRegistry.unregister(a.agentId);
       }
     }
@@ -1283,6 +1296,11 @@ export class CliPresenter {
    * 统一事件分发与 Projection 隔离维护
    */
   private handleEvent(event: HarnessEvent<any>): void {
+    const messageSession = event.type === "team.message.sent" ? event.data?.message?.targetSessionId : undefined;
+    if (messageSession && this.currentSessionId && messageSession !== this.currentSessionId()) return;
+    const sourceAgent = event.agentId ?? event.data?.agent?.agentId;
+    const ownerSession = sourceAgent && sourceAgent !== "main" ? this.agentParentSessionId?.(sourceAgent) : undefined;
+    if (ownerSession && this.currentSessionId && ownerSession !== this.currentSessionId()) return;
     const agentId = event.agentId ?? "main";
     const agentRecord = this.agentRegistry.getAgent(agentId);
     const agentName =

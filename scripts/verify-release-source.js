@@ -209,7 +209,7 @@ export async function verifyReleaseSource({
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const expectedVersion = process.env.EXPECTED_VERSION ?? "0.1.0";
+  const expectedVersion = process.env.EXPECTED_VERSION ?? "0.1.1";
   const expectedTag = process.env.EXPECTED_TAG ?? `v${expectedVersion}`;
   try {
     const result = await verifyReleaseSource({

@@ -391,3 +391,139 @@ test("D02: two catalog aliases for the same physical project share one execution
   assert.equal(calls, 1); assert.equal(state.pendingDispatches.size, 1);
   finish(); await Promise.allSettled(state.executions);
 });
+
+test("completion arriving during model call enters the next safe loop step", async t => {
+  const options = await loopFixture(t);
+  const { TeamRuntime } = await import("../src/team/team-runtime.js");
+  const { AgentRegistry } = await import("../src/agent/agent-registry.js");
+  const { TaskManager } = await import("../src/task/task-manager.js");
+  const { ConcurrencyController } = await import("../src/concurrency/concurrency-controller.js");
+  const team = new TeamRuntime({name: "test", leaderId: "main", taskManager: new TaskManager(), agentRegistry: new AgentRegistry(), concurrencyController: new ConcurrencyController()});
+  t.after(() => team.destroy());
+  let started!: () => void, release!: () => void;
+  const entered = new Promise<void>(r => { started = r; }), gate = new Promise<void>(r => { release = r; });
+  t.after(() => release());
+  const requests: any[] = [];
+  model(t, async (_input, init) => {
+    requests.push(JSON.parse(String(init?.body)));
+    if (requests.length === 1) {
+      started(); await gate;
+      return response({role: "assistant", content: null, tool_calls: [{id: "ping", type: "function", function: {name: "ping", arguments: "{}"}}]});
+    }
+    return response({role: "assistant", content: "done"});
+  });
+  const tool = defineTool({name: "ping", description: "test", parameters: {type: "object", properties: {}}, execute: () => "pong"});
+  const running = runAgentLoop("work", {...options, tools: [tool], teamRuntime: team});
+  await entered;
+  team.notifyBackgroundCompletion({executionId: "busy-completion", agentId: "worker", parentAgentId: "main", parentSessionId: options.contextManager.sessionId, status: "completed", summary: "busy notice"});
+  assert.equal(requests.length, 1);
+  release(); await running;
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].messages.some((m: any) => String(m.content).includes("busy notice")), false);
+  assert.equal(requests[1].messages.filter((m: any) => String(m.content).includes("busy notice")).length, 1);
+});
+
+test("session switch isolates completion; persisted notification recovers after write error without duplication", async t => {
+  const options = await loopFixture(t);
+  const { TeamRuntime } = await import("../src/team/team-runtime.js");
+  const { AgentRegistry } = await import("../src/agent/agent-registry.js");
+  const { TaskManager } = await import("../src/task/task-manager.js");
+  const { ConcurrencyController } = await import("../src/concurrency/concurrency-controller.js");
+  const team = new TeamRuntime({name: "test", leaderId: "main", taskManager: new TaskManager(), agentRegistry: new AgentRegistry(), concurrencyController: new ConcurrencyController()});
+  t.after(() => team.destroy());
+  const original = options.contextManager.sessionId;
+  await options.contextManager.switchSession("other");
+  team.notifyBackgroundCompletion({executionId: "persisted-completion", agentId: "worker", parentAgentId: "main", parentSessionId: original, status: "failed", summary: "original only"});
+  const requests: any[] = [];
+  model(t, async (_input, init) => { requests.push(JSON.parse(String(init?.body))); return response({role: "assistant", content: "done"}); });
+  await runAgentLoop("other session", {...options, tools: [], teamRuntime: team});
+  assert.equal(requests[0].messages.some((m: any) => String(m.content).includes("original only")), false);
+  await options.contextManager.switchSession(original);
+  const originalRecord = options.contextManager.recordUserMessage.bind(options.contextManager);
+  let failed = false;
+  const record = t.mock.method(options.contextManager, "recordUserMessage", async (content: string, metadata?: Record<string, unknown>) => {
+    await originalRecord(content, metadata);
+    if (!failed && metadata?.source === "team-mailbox") { failed = true; throw new Error("after append"); }
+  });
+  await assert.rejects(runAgentLoop("resume", {...options, tools: [], teamRuntime: team}), /after append/);
+  record.mock.restore();
+  assert.equal(team.mailbox.getUnreadCount("main", original), 1);
+  await runAgentLoop("retry", {...options, tools: [], teamRuntime: team});
+  const records = await options.contextManager.getSession().getRecords();
+  assert.equal(records.filter(r => r.type === "user" && r.metadata?.messageId === "persisted-completion").length, 1);
+  assert.equal(requests.at(-1).messages.filter((m: any) => String(m.content).includes("original only")).length, 1);
+  assert.equal(team.mailbox.getUnreadCount("main", original), 0);
+});
+
+test("real background runs notify in completion order and interrupt propagates", async t => {
+  const options = await loopFixture(t);
+  const { TeamRuntime } = await import("../src/team/team-runtime.js");
+  const { SubAgentRuntime } = await import("../src/agent/subagent-runtime.js");
+  const { AgentRegistry } = await import("../src/agent/agent-registry.js");
+  const { TaskManager } = await import("../src/task/task-manager.js");
+  const { ConcurrencyController } = await import("../src/concurrency/concurrency-controller.js");
+  const agents = new AgentRegistry(), tasks = new TaskManager(), concurrency = new ConcurrencyController({maxConcurrentAgents: 3});
+  const team = new TeamRuntime({name: "test", leaderId: "main", taskManager: tasks, agentRegistry: agents, concurrencyController: concurrency});
+  t.after(() => team.destroy());
+  const runtime = new SubAgentRuntime({agentRegistry: agents, concurrencyController: concurrency, taskManager: tasks, projectContext: options.projectContext});
+  runtime.setTeamRuntime(team);
+  const gates = new Map<string, () => void>();
+  let started = 0, allStarted!: () => void;
+  const ready = new Promise<void>(r => { allStarted = r; });
+  t.after(() => { for (const release of gates.values()) release(); });
+  model(t, async (_input, init) => {
+    const body = JSON.parse(String(init?.body));
+    const text = JSON.stringify(body.messages);
+    const name = text.includes("TASK_ALPHA") ? "alpha" : text.includes("TASK_BETA") ? "beta" : "stop";
+    started++; if (started === 3) allStarted();
+    await new Promise<void>((resolve, reject) => {
+      gates.set(name, resolve);
+      const signal = init?.signal;
+      const abort = () => reject(signal?.reason ?? new Error("aborted"));
+      if (signal?.aborted) abort(); else signal?.addEventListener("abort", abort, {once: true});
+    });
+    return response({role: "assistant", content: `full-${name}`});
+  });
+  const parent = {parentAgentId: "main", parentSessionId: options.contextManager.sessionId};
+  runtime.spawnInBackground("TASK_ALPHA", {...parent, agentId: "alpha"});
+  runtime.spawnInBackground("TASK_BETA", {...parent, agentId: "beta"});
+  runtime.spawnInBackground("TASK_STOP", {...parent, agentId: "stop"});
+  await ready;
+  gates.get("beta")!();
+  assert.equal((await runtime.waitForAgent("beta"))?.output, "full-beta");
+  assert.match(team.claimMessagesForStep("main", parent.parentSessionId)[0]!.content, /beta[\s\S]*full-beta/);
+  assert.equal(runtime.interrupt("stop", "test cancellation"), true);
+  assert.equal((await runtime.waitForAgent("stop"))?.success, false);
+  assert.match(team.claimMessagesForStep("main", parent.parentSessionId)[0]!.content, /interrupted/);
+  gates.get("alpha")!();
+  assert.equal((await runtime.waitForAgent("alpha"))?.output, "full-alpha");
+  assert.match(team.claimMessagesForStep("main", parent.parentSessionId)[0]!.content, /alpha[\s\S]*full-alpha/);
+});
+
+test("idle wake starts a serialized Lead loop and coalesces concurrent completions", async t => {
+  const options = await loopFixture(t);
+  const { TeamRuntime } = await import("../src/team/team-runtime.js");
+  const { LeadWake } = await import("../src/team/lead-wake.js");
+  const { AgentRegistry } = await import("../src/agent/agent-registry.js");
+  const { TaskManager } = await import("../src/task/task-manager.js");
+  const { ConcurrencyController } = await import("../src/concurrency/concurrency-controller.js");
+  const team = new TeamRuntime({name: "test", leaderId: "main", taskManager: new TaskManager(), agentRegistry: new AgentRegistry(), concurrencyController: new ConcurrencyController()});
+  t.after(() => team.destroy());
+  const requests: any[] = [];
+  model(t, async (_input, init) => { requests.push(JSON.parse(String(init?.body))); return response({role: "assistant", content: "handled"}); });
+  let running: Promise<string> | undefined, starts = 0;
+  let wake!: InstanceType<typeof LeadWake>;
+  wake = new LeadWake(team, "main", () => options.contextManager.sessionId, () => {
+    if (!running && wake.take()) {
+      starts++;
+      running = runAgentLoop("process completion", {...options, tools: [], teamRuntime: team});
+    }
+  });
+  t.after(() => wake.close());
+  for (const id of ["idle-one", "idle-two"]) team.notifyBackgroundCompletion({executionId: id, agentId: id, parentAgentId: "main", parentSessionId: options.contextManager.sessionId, status: "completed", summary: id});
+  assert.ok(running); await running;
+  assert.equal(starts, 1);
+  assert.equal(requests.length, 1);
+  assert.ok(requests[0].messages.some((m: any) => String(m.content).includes("idle-one")));
+  assert.ok(requests[0].messages.some((m: any) => String(m.content).includes("idle-two")));
+});
