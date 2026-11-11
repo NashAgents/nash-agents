@@ -38,7 +38,7 @@ export function verifyPosixSandbox() {
       readonlyDenied.status === 91 && readonlyDenied.stdout.includes("FS_DENIED") && fs.readFileSync(outside, "utf8") === "UNCHANGED" &&
       fs.readFileSync(path.join(workspace, "inside.txt"), "utf8") === "OK";
     const ready = path.join(root, "listener.json");
-    server = spawn(process.execPath, ["-e", `const s=require('net').createServer(c=>c.end('CONTROL'));s.listen(0,'127.0.0.1',()=>require('fs').writeFileSync(${JSON.stringify(ready)},JSON.stringify(s.address())));setTimeout(()=>process.exit(),15000).unref()`], { stdio: "ignore", env: buildSandboxEnvironment() });
+    server = spawn(process.execPath, ["-e", `const fs=require('fs');const s=require('net').createServer(c=>c.end('CONTROL'));s.listen(0,'127.0.0.1',()=>{const ready=${JSON.stringify(ready)};fs.writeFileSync(ready+'.tmp',JSON.stringify(s.address()));fs.renameSync(ready+'.tmp',ready)});setTimeout(()=>process.exit(),15000).unref()`], { stdio: "ignore", env: buildSandboxEnvironment() });
     const deadline = Date.now() + 3000;
     while (!fs.existsSync(ready) && Date.now() < deadline) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
     if (!fs.existsSync(ready)) throw new Error("Host listener did not become ready");
