@@ -185,6 +185,7 @@ node dist/index.js start --background
 ## 文档与开发
 
 - [首次使用完整流程](docs/install/first-run.md)
+- [Run 结束自动学习与 Skill 沉淀](docs/learning-auto-distillation.md)
 - [架构说明](docs/operations/architecture.md)
 - [兼容性与验收矩阵](docs/release/verification.md)
 - [npm 包](https://www.npmjs.com/package/nash-agents)、[GitHub Release v0.1.0](https://github.com/NashAgents/nash-agents/releases/tag/v0.1.0)

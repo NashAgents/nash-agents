@@ -857,6 +857,9 @@ export async function handleSlashCommand(
             if (def.verification) {
               console.log(`\x1b[1mVerification:\x1b[0m\n${def.verification}\n`);
             }
+            if (def.limitations) {
+              console.log(`\x1b[1mLimitations:\x1b[0m\n${def.limitations}\n`);
+            }
             if (def.referenceFiles && def.referenceFiles.length > 0) {
               console.log(`References: ${def.referenceFiles.join(", ")}`);
             }

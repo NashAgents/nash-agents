@@ -68,6 +68,8 @@ export function parseSkillMarkdown(
     extractSection(/procedure|steps|执行步骤|操作规程/i) || body.trim();
   const verification =
     extractSection(/verification|verify|验证与验收|验证步骤/i) || "";
+  const limitations =
+    extractSection(/limitations?|constraints?|适用范围|限制|前置条件/i) || "";
 
   const metadata: SkillMetadata = {
     name,
@@ -86,6 +88,7 @@ export function parseSkillMarkdown(
     whenToUse,
     procedure,
     verification,
+    limitations: limitations || undefined,
   };
 }
 
@@ -98,7 +101,16 @@ export function formatSkillMarkdown(options: {
   whenToUse: string;
   procedure: string;
   verification: string;
+  limitations?: string;
 }): string {
+  const limitationsSection = options.limitations?.trim()
+    ? `
+
+## Limitations
+
+${options.limitations.trim()}`
+    : "";
+
   const frontmatter = `---
 name: ${options.name}
 description: "${options.description.replace(/"/g, '\\"')}"
@@ -116,7 +128,7 @@ ${options.procedure.trim()}
 
 ## Verification
 
-${options.verification.trim()}
+${options.verification.trim()}${limitationsSection}
 `;
 
   return frontmatter.trim() + "\n";

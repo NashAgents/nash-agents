@@ -187,6 +187,7 @@ For an npm installation, back up first and then install a reviewed published ver
 ## Documentation and development
 
 - [First-run walkthrough](docs/install/first-run.md)
+- [Post-run learning and skill distillation](docs/learning-auto-distillation.md)
 - [Architecture](docs/operations/architecture.md)
 - [Compatibility and acceptance matrix](docs/release/verification.md)
 - [npm package](https://www.npmjs.com/package/nash-agents), [GitHub Release v0.1.0](https://github.com/NashAgents/nash-agents/releases/tag/v0.1.0)

@@ -79,6 +79,14 @@ export class MemoryService {
   }
 
   /**
+   * 当前服务是否绑定了项目作用域。
+   * 自动学习用它决定 project 记忆是否有合法落点，避免把项目事实写进 global。
+   */
+  hasProjectScope(): boolean {
+    return Boolean(this.projectStore);
+  }
+
+  /**
    * 记录一条长期知识 (显式或自动学习)
    */
   async remember(

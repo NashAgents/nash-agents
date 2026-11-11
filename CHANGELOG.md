@@ -2,7 +2,15 @@
 
 Version 0.x is an evolving API. This file records changes included in published versions; it does not itself create a Release, tag, or npm package.
 
-## 0.1.1 — Unreleased
+## 0.1.1 — 2026-11-11
+
+### Automatic learning and skill distillation
+
+- After a normally completed run, a single bounded model call reviews the actual run context (user request, recent conversation, real tool calls and results, verification evidence and final response) and decides whether any memory or reusable Skill should be persisted. Insufficient evidence produces no write.
+- Memory writes reuse the existing service's deduplication, conflict supersede, source priority and credential sanitization. Candidates must be grounded in explicit user wording, a user correction, verified runtime evidence or verified code changes; secrets, transient state and speculation are rejected.
+- Scope is conservative: `global` memory requires an explicit user preference or correction, project-specific content is downgraded to `project`, and global Skills require an explicit cross-project request. Ambiguous or unsupported candidates are skipped.
+- A same-name Skill is never silently overwritten. Auto-generated differences are skipped; an explicit user request creates a versioned name instead.
+- Learning is fail-safe: a bounded synchronous call (20-second default, 16,000-character input budget) cannot change the run's answer, and failures are observable through `learning.completed`, `learning.failed` and `learning.skipped` events. Existing `autoLearn`/`autoGenerate` switches and explicit `remember` or Skill creation remain available. See [post-run learning](docs/learning-auto-distillation.md).
 
 ### Local teammate notifications
 

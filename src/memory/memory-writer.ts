@@ -22,7 +22,7 @@ export interface AddMemoryInput {
 /**
  * 计算两个文本的相似度系数 (Jaccard on token set)
  */
-function calculateTextSimilarity(a: string, b: string): number {
+export function calculateTextSimilarity(a: string, b: string): number {
   const normA = a.toLowerCase().trim();
   const normB = b.toLowerCase().trim();
   if (normA === normB) return 1.0;
@@ -46,7 +46,7 @@ function calculateTextSimilarity(a: string, b: string): number {
  * 例如："Node.js >=24.14" vs "Node.js 22"
  * 或："Linux sandbox backend is Bubblewrap" vs "Linux sandbox backend is Landlock"
  */
-function isConflictingTopic(a: string, b: string): boolean {
+export function isConflictingTopic(a: string, b: string): boolean {
   const lowA = a.toLowerCase();
   const lowB = b.toLowerCase();
 
@@ -77,7 +77,7 @@ function isConflictingTopic(a: string, b: string): boolean {
 /**
  * 获取来源的数值优先级 (越大越权威)
  */
-function getSourcePriority(source: MemorySource): number {
+export function getSourcePriority(source: MemorySource): number {
   switch (source) {
     case "user-explicit":
       return 100;

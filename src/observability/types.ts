@@ -101,8 +101,13 @@ export type HarnessEventType =
   | "memory.created"
   | "memory.updated"
   | "memory.deprecated"
+  | "memory.persist_failed"
   | "skill.discovered"
   | "skill.loaded"
+  | "skill.created"
+  | "learning.completed"
+  | "learning.failed"
+  | "learning.skipped"
   // MCP 协议与服务事件
   | "mcp.server.connecting"
   | "mcp.server.connected"

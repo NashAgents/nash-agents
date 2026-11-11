@@ -30,6 +30,9 @@ console.log(`Running ${group}: ${files.length} files (other environment groups e
 const env = { ...process.env };
 const testHome = mkdtempSync(path.join(os.tmpdir(), 'nash-test-home-'));
 env.NASH_HOME = testHome;
+// 自动化测试默认关闭 Run 结束学习，避免模拟模型请求序列被额外的学习调用打乱；
+// 需要验证学习链路的测试请显式注入 learningModelCaller。
+env.NASH_DISABLE_AUTO_LEARNING = '1';
 const cleanup = () => rmSync(testHome, { recursive: true, force: true });
 process.once('exit', cleanup);
 delete env.DISPLAY;

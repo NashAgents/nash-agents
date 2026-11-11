@@ -8,7 +8,7 @@ import os from "node:os";
 import { resolveProjectContext } from "../src/project/project-context.js";
 import { MemoryService } from "../src/memory/index.js";
 import { SkillService } from "../src/skills/index.js";
-import { RunLearningHook } from "../src/learning/index.js";
+import { RunLearningHook, type LearningModelCaller } from "../src/learning/index.js";
 import { SkillOpenTool } from "../src/skills/skill-tool.js";
 
 describe("Live E2E: Memory & Skills Full Lifecycle", () => {
@@ -30,14 +30,39 @@ describe("Live E2E: Memory & Skills Full Lifecycle", () => {
         projectContext: projectCtx,
         nashHome: testHome,
       });
+      let nextLearningDecision: Record<string, unknown> = {
+        decision: "none",
+        memories: [],
+        skill: null,
+      };
+      const fakeLearningCaller: LearningModelCaller = async () => ({
+        text: JSON.stringify(nextLearningDecision),
+        model: "fake-learning-model",
+      });
       const learningHook = new RunLearningHook({
         memoryService,
         skillService,
         projectContext: projectCtx,
         nashHome: testHome,
+        modelCaller: fakeLearningCaller,
       });
 
       // 1. Live E2E: Memory 显式学习
+      nextLearningDecision = {
+        decision: "memory",
+        memories: [
+          {
+            content: "这个项目必须使用 Node 24.14。",
+            kind: "environment",
+            scope: "project",
+            basis: "user-explicit",
+            confidence: 1.0,
+            evidence: "记住这个项目必须使用 Node 24.14。",
+            tags: ["node"],
+          },
+        ],
+        skill: null,
+      };
       const memRunRes = await learningHook.processRun({
         sessionId: "live-session-1",
         userInput: "记住这个项目必须使用 Node 24.14。",
@@ -56,23 +81,54 @@ describe("Live E2E: Memory & Skills Full Lifecycle", () => {
         content: "Package manager is npm.",
         source: "agent-learned",
       });
+      nextLearningDecision = {
+        decision: "memory",
+        memories: [
+          {
+            content: "这个项目应该使用 pnpm 而不是 npm。",
+            kind: "environment",
+            scope: "project",
+            basis: "user-correction",
+            confidence: 0.95,
+            evidence: "不对，这个项目应该使用 pnpm 而不是 npm。",
+          },
+        ],
+        skill: null,
+      };
       await learningHook.processRun({
         sessionId: "live-session-2",
         userInput: "不对，这个项目应该使用 pnpm 而不是 npm。",
         response: "好的，已更正。",
       });
-      const corrected = await memoryService.retrieveRelevant("package manager");
+      const corrected = await memoryService.retrieveRelevant("pnpm 包管理器");
       assert.strictEqual(corrected.entries.length, 1);
       assert.ok(corrected.entries[0].content.includes("pnpm"));
 
       // 4. Live E2E: Skill 显式生成
+      nextLearningDecision = {
+        decision: "skill",
+        memories: [],
+        skill: {
+          name: "security-regression-fix",
+          description: "Reproduce and fix a security regression with a red-to-green test.",
+          whenToUse: "When a security regression has a reproducible failing test and the fix can be verified.",
+          procedure:
+            "1. Read `src/auth.ts` and identify the invariant broken by the regression.\n" +
+            "2. Update `src/auth.ts` with the minimal fix.\n" +
+            "3. Run `npm test` and confirm the regression test turns red-to-green.",
+          verification: "Run `npm test` and confirm the previously failing security regression test passes.",
+          limitations: "Only applies when the regression has an executable reproduction test.",
+          scope: "project",
+          evidence: "Editing src/auth.ts and running npm test produced a passing result.",
+        },
+      };
       const skillRunRes = await learningHook.processRun({
         sessionId: "live-session-3",
         userInput: "把刚才安全 Bug 的 red→green 修复流程保存成 skill，叫 security-regression-fix",
         toolCalls: [
-          { name: "read_file", args: { path: "src/auth.ts" } },
-          { name: "edit_file", args: { path: "src/auth.ts" } },
-          { name: "bash", args: { command: "npm test" } },
+          { name: "read_file", args: { path: "src/auth.ts" }, result: "auth guard", success: true },
+          { name: "edit_file", args: { path: "src/auth.ts" }, result: "updated auth guard", success: true },
+          { name: "bash", args: { command: "npm test" }, result: "tests passed", success: true },
         ],
         testResults: { command: "npm test", passed: true },
       });
@@ -82,16 +138,17 @@ describe("Live E2E: Memory & Skills Full Lifecycle", () => {
       // 5. Level 1 Metadata Context 注入验证 (不应包含 procedure)
       const availablePrompt = await skillService.renderAvailableSkillsPrompt("security");
       assert.ok(availablePrompt.includes("security-regression-fix"));
-      assert.ok(!availablePrompt.includes("1. Update file: `src/auth.ts`"));
+      assert.ok(!availablePrompt.includes("Update `src/auth.ts`"));
 
       // 6. Level 2 On-Demand 加载验证 (skill_open)
       const openTool = new SkillOpenTool(skillService);
       const openRes = await openTool.execute({ name: "security-regression-fix" });
       assert.strictEqual(openRes.success, true);
-      assert.ok(openRes.output.includes("Update file: `src/auth.ts`"));
+      assert.ok(openRes.output.includes("Update `src/auth.ts`"));
       assert.ok(openRes.output.includes("npm test"));
 
       // 7. Live E2E: Auto Skill Boundary (普通修改 typo 不生成 Skill)
+      nextLearningDecision = { decision: "none", memories: [], skill: null };
       const typoRunRes = await learningHook.processRun({
         sessionId: "live-session-4",
         userInput: "修复一个 typo",

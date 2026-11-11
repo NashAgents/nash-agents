@@ -133,6 +133,23 @@ export class SkillService {
   }
 
   /**
+   * 当前服务是否绑定了项目作用域。
+   */
+  hasProjectScope(): boolean {
+    return Boolean(this.projectDir);
+  }
+
+  /**
+   * 查找已存在的同名 Skill（默认先项目后全局）。
+   */
+  async findExistingSkill(
+    name: string,
+    scope?: SkillScope
+  ): Promise<{ metadata: SkillMetadata; content: string } | undefined> {
+    return await this.writer.findExisting(name, scope);
+  }
+
+  /**
    * 获取所有可用 Skills 元数据列表 (Level 1)
    */
   async listAllSkills(): Promise<SkillMetadata[]> {

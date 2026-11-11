@@ -95,6 +95,11 @@ export interface SkillDefinition {
   verification: string;
 
   /**
+   * 适用范围、前置条件与已知限制 (Limitations)
+   */
+  limitations?: string;
+
+  /**
    * 可用的参考文档列表 (references/*.md)
    */
   referenceFiles?: string[];
